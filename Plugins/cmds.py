@@ -1,10 +1,10 @@
 import os
 import sys
 import asyncio
-from pyrogram import Client, filters, enums
+from pyrogram import Client, filters
 from pyrogram.types import Message
 from database import admin_filter, add_user, is_banned
-from Plugins.contact import is_subscribed, force_sub_markup, send_start_message
+from Plugins.contact import is_subscribed, send_force_sub_prompt, send_start_message
 
 @Client.on_message(filters.command("start") & filters.private)
 async def start_cmd(client: Client, message: Message):
@@ -15,11 +15,7 @@ async def start_cmd(client: Client, message: Message):
         return
 
     if not await is_subscribed(client, user_id):
-        return await message.reply(
-            "<blockquote><b><i>Please join our channel(s) first to use this bot.</i></b></blockquote>",
-            parse_mode=enums.ParseMode.HTML,
-            reply_markup=await force_sub_markup(client, user_id)
-        )
+        return await send_force_sub_prompt(client, message)
 
     await add_user(user_id, message.from_user.first_name or "", message.from_user.username or "")
     await send_start_message(client, message.chat.id, mention_user)
