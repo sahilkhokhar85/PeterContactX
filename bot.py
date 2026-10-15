@@ -2,6 +2,7 @@ import os
 from pyrogram import Client
 from aiohttp import web
 from config import API_ID, API_HASH, BOT_TOKEN, ADMIN
+from database import ensure_indexes
 
 routes = web.RouteTableDef()
 
@@ -36,7 +37,9 @@ class Bot(Client):
             print(f"Web server error: {e}")
             
         await super().start(*args, **kwargs)
-        
+
+        await ensure_indexes()   # message-map TTL, ban list, join requests (safe to run on every start)
+
         me = await self.get_me()
         print(f"Bot Started as {me.first_name}")
         
