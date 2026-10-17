@@ -1,10 +1,11 @@
 import asyncio
+import html
 import time
 from collections import deque
 
 from pyrogram import Client, filters, enums
 from pyrogram.errors import UserIsBlocked, InputUserDeactivated
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import Message
 
 from config import (
     OWNERS, RATE_LIMIT_MESSAGES, RATE_LIMIT_SECONDS,
@@ -12,14 +13,11 @@ from config import (
 )
 from database import (
     add_user, is_banned, get_admins, admin_filter, find_auto_reply,
-    get_start_message, get_chat_history, add_chat_turns, search_content,
+    get_chat_history, add_chat_turns, search_content,
     save_forward_map, get_forward_user,
 )
 from ai import ask_gemini
-# force-join lives in Plugins/forcesub.py; re-exported here because other plugins import these names from contact
-from Plugins.forcesub import (  # noqa: F401
-    get_not_joined_channels, is_subscribed, force_sub_markup, send_force_sub_prompt,
-)
+from Plugins.forcesub import is_subscribed, send_force_sub_prompt
 
 SENT_CONFIRM_DELETE_AFTER = 3  # seconds before "Message sent!" auto-deletes
 
@@ -77,7 +75,7 @@ async def forward_to_admin(client: Client, message: Message):
     allowed, notice = check_rate_limit(user_id, message.media_group_id)
     if not allowed:
         if notice:
-            await message.reply("⏳ <i>You are sending messages too fast. Please slow down.</i>", parse_mode=enums.ParseMode.HTML)
+            await message.reply("<b>⏳ You Are Sending Messages Too Fast. Please Slow Down.</b>", parse_mode=enums.ParseMode.HTML)
         return
 
     if not await is_subscribed(client, user_id):
@@ -106,7 +104,7 @@ async def forward_to_admin(client: Client, message: Message):
             continue
 
     if not sent_to_any:
-        return await message.reply("❌ **Error:** Message could not be sent.")
+        return await message.reply("<b>❌ Error: Message Could Not Be Sent.</b>", parse_mode=enums.ParseMode.HTML)
 
     # Indexed content match — if the user's text matches something scanned
     # from a registered channel (see Plugins/indexer.py), send that directly
@@ -141,7 +139,7 @@ async def forward_to_admin(client: Client, message: Message):
             return await message.reply(ai_reply)
 
     sent_msg = await message.reply(
-        "✅ <i>Message sent!</i>",
+        "<b>✅ Message Sent!</b>",
         parse_mode=enums.ParseMode.HTML
     )
     asyncio.create_task(_delete_after_delay(sent_msg))
@@ -170,35 +168,15 @@ async def resolve_reply_target(admin_id: int, replied_msg: Message):
 async def reply_to_user(client: Client, message: Message):
     user_id = await resolve_reply_target(message.chat.id, message.reply_to_message)
     if not user_id:
-        return await message.reply("❌ **User ID not detected.** Reply to a message the bot forwarded to you.")
+        return await message.reply("<b>❌ User ID Not Detected. Reply To A Message The Bot Forwarded To You.</b>", parse_mode=enums.ParseMode.HTML)
     try:
         await message.copy(user_id)
     except UserIsBlocked:
-        await message.reply("🚫 **This user has blocked the bot.**")
+        await message.reply("<b>🚫 This User Has Blocked The Bot.</b>", parse_mode=enums.ParseMode.HTML)
     except InputUserDeactivated:
-        await message.reply("🚫 **This user's account is deleted.**")
+        await message.reply("<b>🚫 This User's Account Is Deleted.</b>", parse_mode=enums.ParseMode.HTML)
     except Exception as e:
-        await message.reply(f"⚠️ **Error sending to user:**\n`{e}`")
-
-
-# ---------------- Start message helpers ----------------
-
-def build_buttons_markup(rows):
-    if not rows:
-        return None
-    return InlineKeyboardMarkup([[InlineKeyboardButton(b["text"], url=b["url"]) for b in row] for row in rows])
-
-
-async def send_start_message(client: Client, chat_id: int, mention: str):
-    """Sends the admin-configurable /start message (used by /start and settings preview)."""
-    doc = await get_start_message()
-    text = doc.get("text", "").replace("{mention}", mention)
-    markup = build_buttons_markup(doc.get("buttons") or [])
-    media_type = doc.get("media_type")
-    media_file_id = doc.get("media_file_id")
-    if media_type == "photo":
-        await client.send_photo(chat_id, media_file_id, caption=text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
-    elif media_type == "video":
-        await client.send_video(chat_id, media_file_id, caption=text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
-    else:
-        await client.send_message(chat_id, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
+        await message.reply(
+            f"<b>⚠️ Error Sending To User:</b>\n<code>{html.escape(str(e))}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
