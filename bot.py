@@ -1,5 +1,6 @@
 import os
-from pyrogram import Client
+import html
+from pyrogram import Client, enums
 from aiohttp import web
 from config import API_ID, API_HASH, BOT_TOKEN, ADMIN
 from database import ensure_indexes
@@ -45,7 +46,7 @@ class Bot(Client):
         
         if ADMIN:
             try:
-                await self.send_message(ADMIN, f"**🤖 {me.first_name} Contact Bot is started...**")
+                await self.send_message(ADMIN, f"<b>🤖 {html.escape(me.first_name)} Contact Bot Is Started...</b>", parse_mode=enums.ParseMode.HTML)
             except Exception as e:
                 print(f"Error sending message to admin: {e}")
 
