@@ -21,7 +21,6 @@ banned_col = db.banned
 auto_replies_col = db.auto_replies
 force_channels_col = db.force_channels
 join_requests_col = db.join_requests
-settings_col = db.settings
 chat_history_col = db.chat_history
 content_col = db.content_index
 indexed_channels_col = db.indexed_channels
@@ -347,36 +346,6 @@ async def get_join_request(user_id: int, chat_id: int):
 
 async def clear_join_request(user_id: int, chat_id: int):
     await join_requests_col.delete_many({"user_id": user_id, "chat_id": chat_id})
-
-
-# ---------------- Bot Settings (start message) ----------------
-
-DEFAULT_START_MESSAGE = {
-    "_id": "start_message",
-    "media_type": None,   # "photo" or "video"
-    "media_file_id": "https://files.catbox.moe/n69gs0.jpg",
-    "text": (
-        "💌Hello, {mention} Dear Subscriber, Welcome To Our Bot\n\n"
-        "☆ Through This Bot You Can Contact Us...\n\n"
-        "🔵You Ask Something, Promotion, etc.\n"
-        "🟢You Will Get Updates.\n"
-        "🔴You Can Request Movie Series & TV Show\n\n"
-        "Join : https://t.me/Mrn_Officialx\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "😘Join - Share - Like >>> @Mrn_Officialx⚡"
-    ),
-    "buttons": []  # list of rows, each row is a list of {"text": ..., "url": ...}
-}
-
-async def get_start_message() -> dict:
-    doc = await settings_col.find_one({"_id": "start_message"})
-    if not doc:
-        doc = DEFAULT_START_MESSAGE.copy()
-        await settings_col.update_one({"_id": "start_message"}, {"$set": doc}, upsert=True)
-    return doc
-
-async def set_start_message_field(field: str, value):
-    await settings_col.update_one({"_id": "start_message"}, {"$set": {field: value}}, upsert=True)
 
 
 # ---------------- AI Chat History ----------------
