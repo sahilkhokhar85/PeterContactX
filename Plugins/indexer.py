@@ -1,8 +1,9 @@
 import asyncio
+import html
 import re
 from math import ceil
 
-from pyrogram import Client, filters
+from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
 from pyrogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -17,6 +18,7 @@ from database import (
 # ask the admin for the last message (forward it, or send its t.me link) and
 # then walk backwards from that ID in batches.
 BATCH_SIZE = 200
+HTML = enums.ParseMode.HTML
 
 LINK_REGEX = re.compile(r"(?:https?://)?t\.me/(c/)?([\w\d_]+)/(\d+)")
 
@@ -65,28 +67,30 @@ async def request_index(client: Client, message: Message):
         chat = await client.get_chat(chat_id)
     except Exception as e:
         return await message.reply(
-            f"❌ **Couldn't access that channel:**\n`{e}`\n"
-            f"_Make sure the bot is a member/admin there._"
+            f"<b>❌ Couldn't Access That Channel:</b>\n<code>{html.escape(str(e))}</code>\n"
+            f"<b>Make Sure The Bot Is A Member/Admin There.</b>",
+            parse_mode=HTML
         )
 
     pending_index[message.from_user.id] = (chat.id, last_msg_id)
     await message.reply(
-        f"**Index this channel?**\n\n"
-        f"Chat: `{chat.title or chat.id}`\n"
-        f"Up to message ID: `{last_msg_id}`\n\n"
-        f"_Text, links and images will be scanned. New posts here will also "
-        f"auto-index going forward, no need to repeat this._",
+        f"<b>Index This Channel?</b>\n\n"
+        f"<b>Chat:</b> <code>{html.escape(str(chat.title or chat.id))}</code>\n"
+        f"<b>Up To Message ID:</b> <code>{last_msg_id}</code>\n\n"
+        f"<b>Text, Links And Images Will Be Scanned. New Posts Here Will Also "
+        f"Auto-Index Going Forward, No Need To Repeat This.</b>",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Yes, index it", callback_data="do_index")],
+            [InlineKeyboardButton("✅ Yes, Index It", callback_data="do_index")],
             [InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")]
-        ])
+        ]),
+        parse_mode=HTML
     )
 
 
 @Client.on_callback_query(filters.regex("^cancel_index$") & admin_filter)
 async def cancel_index_cb(client: Client, query: CallbackQuery):
     pending_index.pop(query.from_user.id, None)
-    await query.message.edit_text("Cancelled.")
+    await query.message.edit_text("<b>Cancelled.</b>", parse_mode=HTML)
 
 
 @Client.on_callback_query(filters.regex("^do_index$") & admin_filter)
@@ -98,7 +102,7 @@ async def do_index_cb(client: Client, query: CallbackQuery):
     chat_id, last_msg_id = target
     await add_indexed_channel(chat_id)
     status = query.message
-    await status.edit_text(f"🔍 **Indexing started...** (up to message `{last_msg_id}`)")
+    await status.edit_text(f"<b>🔍 Indexing Started...</b> <b>(Up To Message</b> <code>{last_msg_id}</code><b>)</b>", parse_mode=HTML)
 
     scanned = 0
     added = 0
@@ -136,17 +140,19 @@ async def do_index_cb(client: Client, query: CallbackQuery):
         if batch % 3 == 0 or batch == batches - 1:
             try:
                 await status.edit_text(
-                    f"📊 **Indexing...** Batch {batch + 1}/{batches}\n"
-                    f"Scanned: `{scanned}` • Indexed: `{added}`"
+                    f"<b>📊 Indexing... Batch {batch + 1}/{batches}</b>\n"
+                    f"<b>Scanned:</b> <code>{scanned}</code> <b>• Indexed:</b> <code>{added}</code>",
+                    parse_mode=HTML
                 )
             except Exception:
                 pass
 
     await status.edit_text(
-        f"✅ **Indexing complete**\n\n"
-        f"• Scanned: `{scanned}`\n"
-        f"• Indexed (text/link/image posts): `{added}`\n\n"
-        f"_New posts in this channel will now be indexed automatically._"
+        f"<b>✅ Indexing Complete</b>\n\n"
+        f"<b>• Scanned:</b> <code>{scanned}</code>\n"
+        f"<b>• Indexed (Text/Link/Image Posts):</b> <code>{added}</code>\n\n"
+        f"<b>New Posts In This Channel Will Now Be Indexed Automatically.</b>",
+        parse_mode=HTML
     )
 
 
@@ -161,17 +167,18 @@ async def auto_index_new_post(client: Client, message: Message):
 @Client.on_message(filters.command("clearindex") & filters.private & admin_filter)
 async def clearindex_cmd(client: Client, message: Message):
     await message.reply(
-        "⚠️ **This will permanently delete ALL indexed content.**\n"
-        "_Registered channels stay registered — new posts will still auto-index after this._\n\n"
-        "Are you sure?",
+        "<b>⚠️ This Will Permanently Delete ALL Indexed Content.\n"
+        "Registered Channels Stay Registered — New Posts Will Still Auto-Index After This.\n\n"
+        "Are You Sure?</b>",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Yes, clear everything", callback_data="do_clearindex")],
+            [InlineKeyboardButton("✅ Yes, Clear Everything", callback_data="do_clearindex")],
             [InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")]
-        ])
+        ]),
+        parse_mode=HTML
     )
 
 
 @Client.on_callback_query(filters.regex("^do_clearindex$") & admin_filter)
 async def do_clearindex_cb(client: Client, query: CallbackQuery):
     await clear_content_index()
-    await query.message.edit_text("🗑️ **All indexed content has been cleared.**")
+    await query.message.edit_text("<b>🗑️ All Indexed Content Has Been Cleared.</b>", parse_mode=HTML)
