@@ -6,6 +6,7 @@ forwarded to you from a user.
 Banned ids (even ones that never used the bot) get no reply at all - see Plugins/ban_guard.py.
 """
 import asyncio
+import html
 import io
 import re
 import time
@@ -15,16 +16,14 @@ from pyrogram.types import Message
 
 from config import OWNERS
 from database import (
-    admin_perm, ban_users, unban_users, get_banned_users, banned_users_count,
-    total_users_count, admins_count, get_admins, get_user, is_banned, is_admin,
-    content_count,
+    admin_filter, admin_perm, ban_users, unban_users, get_banned_users, banned_users_count,
+    total_users_count, get_admins, get_user, is_banned, is_admin,
 )
 from Plugins.contact import resolve_reply_target
-from Plugins.broadcast import is_running
 
 try:
     import psutil
-except ImportError:   # /status still works without it, just without CPU/RAM
+except ImportError:   # /status still works without it, CPU/RAM then show 0
     psutil = None
 
 BOT_START_TIME = time.time()
@@ -81,7 +80,7 @@ async def _collect_target_ids(client, message: Message) -> set:
                 data = await client.download_media(doc, in_memory=True)
                 ids |= ids_from_file_text(bytes(data.getbuffer()).decode("utf-8", errors="ignore"))
             except Exception as e:
-                await message.reply_text(f"**❌ Couldn't read that file:** `{type(e).__name__}`")
+                await message.reply_text(f"<b>❌ Couldn't Read That File:</b> <code>{type(e).__name__}</code>")
 
     if not ids and message.reply_to_message:
         user_id = await resolve_reply_target(message.chat.id, message.reply_to_message)
@@ -95,21 +94,24 @@ async def ban_cmd(client: Client, message: Message):
     ids = await _collect_target_ids(client, message)
     if not ids:
         return await message.reply_text(
-            "**Usage:**\n"
-            "`/ban user_id`\n"
-            "`/ban id1 id2 id3 ...` (many ids at once)\n"
-            "Send or reply with a .txt file of ids using /ban\n"
-            "Or reply to a message the bot forwarded to you with /ban\n\n"
-            "_Banned ids are blocked and get no reply._"
+            "<b>Usage:</b>\n"
+            "<code>/ban user_id</code>\n"
+            "<code>/ban id1 id2 id3 ...</code> <b>(Many Ids At Once)</b>\n"
+            "<b>Send Or Reply With A .txt File Of Ids Using /ban\n"
+            "Or Reply To A Message The Bot Forwarded To You With /ban\n\n"
+            "Ids Don't Need To Have Used The Bot. They Are Blocked Forever And Get No Reply.</b>"
         )
     protected = set(OWNERS) | set(await get_admins())
     skipped = ids & protected
     ids -= protected
     new = await ban_users(ids) if ids else 0
-    text = f"**✅ Banned {new} new id(s).**\nAlready banned: `{len(ids) - new}`\n"
+    text = (
+        f"<b>✅ Banned {new} New Id(s).</b>\n"
+        f"<b>Already Banned:</b> <code>{len(ids) - new}</code>\n"
+    )
     if skipped:
-        text += f"Skipped admins: `{len(skipped)}`\n"
-    text += f"Total banned now: `{await banned_users_count()}`"
+        text += f"<b>Skipped Admins:</b> <code>{len(skipped)}</code>\n"
+    text += f"<b>Total Banned Now:</b> <code>{await banned_users_count()}</code>"
     await message.reply_text(text)
 
 
@@ -118,16 +120,16 @@ async def unban_cmd(client: Client, message: Message):
     ids = await _collect_target_ids(client, message)
     if not ids:
         return await message.reply_text(
-            "**Usage:**\n"
-            "`/unban user_id`\n"
-            "`/unban id1 id2 id3 ...`\n"
-            "Or reply to a forwarded message / a .txt file of ids with /unban"
+            "<b>Usage:</b>\n"
+            "<code>/unban user_id</code>\n"
+            "<code>/unban id1 id2 id3 ...</code>\n"
+            "<b>Or Reply To A Forwarded Message / A .txt File Of Ids With /unban</b>"
         )
     removed = await unban_users(ids)
     await message.reply_text(
-        f"**✅ Unbanned {removed} id(s).**\n"
-        f"Not in the ban list: `{len(ids) - removed}`\n"
-        f"Total banned now: `{await banned_users_count()}`"
+        f"<b>✅ Unbanned {removed} Id(s).</b>\n"
+        f"<b>Not In The Ban List:</b> <code>{len(ids) - removed}</code>\n"
+        f"<b>Total Banned Now:</b> <code>{await banned_users_count()}</code>"
     )
 
 
@@ -136,32 +138,30 @@ async def banlist_cmd(client: Client, message: Message):
     """Sends the whole ban list as a .txt file (handy as a backup, and /ban accepts the same file back)."""
     ids = await get_banned_users()
     if not ids:
-        return await message.reply_text("**The ban list is empty.**")
+        return await message.reply_text("<b>The Ban List Is Empty.</b>")
     buf = io.BytesIO("\n".join(str(i) for i in ids).encode("utf-8"))
     buf.name = "banned_ids.txt"
-    await message.reply_document(buf, caption=f"**🚫 Banned ids: {len(ids)}**")
+    await message.reply_document(buf, caption=f"<b>🚫 Banned Ids: {len(ids)}</b>")
 
 
-@Client.on_message(filters.command("status") & filters.private & admin_perm("can_settings"))
-async def status_cmd(client: Client, message: Message):
-    cpu = ram = None
-    if psutil:
-        try:
-            cpu = await asyncio.to_thread(psutil.cpu_percent, 0.5)
-            ram = psutil.virtual_memory().percent
-        except Exception:
-            pass
+@Client.on_message(filters.command("status") & filters.private & admin_filter)
+async def bot_status(client: Client, message: Message):
+    total_users = await total_users_count()
+    total_banned = await banned_users_count()
+    try:
+        cpu = await asyncio.to_thread(psutil.cpu_percent, 0.5)
+        ram = psutil.virtual_memory().percent
+    except Exception:
+        cpu = ram = 0
+    uptime = get_readable_time(int(time.time() - BOT_START_TIME))
     text = (
-        "**🤖 BOT STATUS**\n\n"
-        f"👤 Users - `{await total_users_count()}`\n"
-        f"🚫 Banned - `{await banned_users_count()}`\n"
-        f"👮 Admins - `{await admins_count()}`\n"
-        f"📚 Indexed posts - `{await content_count()}`\n"
-        f"📢 Broadcast running - `{'yes' if is_running() else 'no'}`\n"
+        "<b>🤖 BOT STATUS !!</b>\n\n"
+        f"<b>👤 Users -</b> <code>{total_users}</code>\n"
+        f"<b>🚫 Ban Users -</b> <code>{total_banned}</code>\n"
+        f"<b>⚙️ CPU -</b> <code>{cpu}%</code>\n"
+        f"<b>💾 RAM -</b> <code>{ram}%</code>\n"
+        f"<b>⚡ Uptime -</b> <code>{uptime}</code>"
     )
-    if cpu is not None:
-        text += f"⚙️ CPU - `{cpu}%`\n💾 RAM - `{ram}%`\n"
-    text += f"⚡ Uptime - `{get_readable_time(int(time.time() - BOT_START_TIME))}`"
     await message.reply_text(text)
 
 
@@ -170,21 +170,23 @@ async def info_cmd(client: Client, message: Message):
     """/info (reply to a forwarded message) or /info <user_id>: who is this user?"""
     ids = await _collect_target_ids(client, message)
     if not ids:
-        return await message.reply_text("**Usage:** reply to a forwarded message with /info, or send `/info user_id`")
+        return await message.reply_text(
+            "<b>Usage:</b> <b>Reply To A Forwarded Message With /info, Or Send</b> <code>/info user_id</code>"
+        )
     for user_id in list(ids)[:5]:
         doc = await get_user(user_id)
-        lines = [f"**👤 User** `{user_id}`"]
+        lines = [f"<b>👤 User</b> <code>{user_id}</code>"]
         if doc:
-            name = doc.get("first_name") or "-"
-            username = f"@{doc['username']}" if doc.get("username") else "-"
-            lines.append(f"Name: {name}\nUsername: {username}")
+            name = html.escape(doc.get("first_name") or "-")
+            username = f"@{html.escape(doc['username'])}" if doc.get("username") else "-"
+            lines.append(f"<b>Name: {name}\nUsername: {username}</b>")
             joined = doc.get("joined_at")
             if joined:
-                lines.append(f"First seen: `{joined:%Y-%m-%d}`")
+                lines.append(f"<b>First Seen:</b> <code>{joined:%Y-%m-%d}</code>")
         else:
-            lines.append("_Not in the user list (never used the bot, or was removed after blocking it)._")
-        lines.append(f"Banned: `{'yes' if await is_banned(user_id) else 'no'}`")
+            lines.append("<b>Not In The User List (Never Used The Bot, Or Was Removed After Blocking It).</b>")
+        lines.append(f"<b>Banned:</b> <code>{'yes' if await is_banned(user_id) else 'no'}</code>")
         if await is_admin(user_id):
-            lines.append("Role: `admin`")
-        lines.append(f"[Open profile](tg://user?id={user_id})")
+            lines.append("<b>Role:</b> <code>admin</code>")
+        lines.append(f'<a href="tg://user?id={user_id}"><b>Open Profile</b></a>')
         await message.reply_text("\n".join(lines))
