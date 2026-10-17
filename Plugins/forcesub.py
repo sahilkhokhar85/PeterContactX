@@ -211,7 +211,7 @@ async def force_sub_markup(client: Client, user_id: int) -> InlineKeyboardMarkup
     return InlineKeyboardMarkup(rows)
 
 
-FORCE_SUB_TEXT = "<blockquote><b><i>Please join our channel(s) first to use this bot.</i></b></blockquote>"
+FORCE_SUB_TEXT = "<blockquote><b>Please Join Our Channel(s) First To Use This Bot.</b></blockquote>"
 
 
 async def send_force_sub_prompt(client: Client, message):
@@ -252,7 +252,7 @@ async def track_join_request(client: Client, update):
         return
     clear_user_cache(update.from_user.id)
     try:
-        await client.send_message(update.from_user.id, "✅ <b>Request received!</b> You can use the bot now.", parse_mode=enums.ParseMode.HTML)
+        await client.send_message(update.from_user.id, "<b>✅ Request Received! You Can Use The Bot Now.</b>", parse_mode=enums.ParseMode.HTML)
     except Exception:
         pass   # user may never have started the bot - nothing to do
 
