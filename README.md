@@ -10,22 +10,23 @@
 - [x] Reply To User Directly From Owner/Admin Chat (reply mapping is stored in MongoDB, so old messages stay repliable after a restart and for users who hide their identity)
 - [x] Anti-Spam Rate Limit (per user, configurable)
 - [x] Restart Bot Anytime (Admin Only)
-- [x] Full Button-Based Settings Panel (`/settings`)
+- [x] Settings Panel (`/settings`): Automatic Replies, Force Join, Statistics
 - [x] Automatic Keyword Replies (whole-word match, so `hi` does not fire on `this`)
 - [x] Force Join One Or More Channels (normal mode **and** join-request mode, cached checks)
-- [x] Customizable Start Message (Media / Text / Buttons)
-- [x] Fast Broadcast: parallel sending, FloodWait handling, confirm step, live progress + Stop button, auto-cleanup of users who blocked the bot
-- [x] `/broadcast` And `/send <user_id>`: send any message type (text, photo, video, file, sticker, albums) with a preview before sending
+- [x] Permanent Start Message With Image (set in `texts.py`)
+- [x] Fast Broadcast: parallel sending, FloodWait handling, preview + confirm, live progress bar and summary, auto-cleanup of users who blocked the bot
+- [x] `/broadcast` And `/send <user_id>`: send any message type (text, photo, video, file, sticker, albums) with a preview before sending (same flow as the ChillFlizX file store bot)
 - [x] Multi-Admin Support With Permissions (settings / broadcast / manage admins)
 - [x] Silent Ban Guard, Bulk `/ban` `/unban` (ids, `.txt` file, or reply), `/banlist` Export
 - [x] `/status` And `/info`
+- [x] Every Bot Message Is Bold
 - [x] 24x7 Uptime With Built-In Web Server
 
 ## Commands
 
 ```
 start - check I'm alive
-settings - open the bot settings panel (admin)
+settings - open the control panel (admin)
 broadcast - send any messages to all users, with preview (admin)
 send - send messages to ONE user: /send user_id (admin)
 ban - ban users: ids, reply to a forwarded message, or .txt file (admin)
@@ -36,25 +37,23 @@ info - who sent this message / who is this id (admin)
 restart - restart bot (admin only)
 ```
 
-Automatic replies, force join, start message, broadcast builder, admins and
-permissions, banned users and statistics are also available in the `/settings` button menu.
+`/settings` has three buttons: **Automatic Replies**, **Force Join** and **Statistics**.
+The `/start` message (image + text) is fixed in `texts.py`; change it there and redeploy.
 
 ### Broadcast flow (`/broadcast`)
 
 1. Send `/broadcast`, then send as many messages as you want, one by one (albums included).
 2. Send `/done` and the bot shows you a **preview** of everything, in order.
-3. Tap **Confirm broadcast**. Progress is shown live, with a **Stop** button.
+3. Tap **Confirm Broadcast**. A live progress bar and a summary (success / blocked / deleted / failed) are shown.
 
 `/broadcast` as a reply to a message (or album) jumps straight to the preview.
 `/cancel` stops the flow at any time. `/send <user_id>` works the same but to one user only.
 
 ### Admin permissions
 
-Owners (the `ADMIN` variable) can do everything. Admins added from
-`/settings → User Management → Bot administrators` can be given, one by one:
-**Settings panel**, **Broadcast**, **Manage admins** (tap ⚙️ next to the admin).
-Older admins that were added before permissions existed keep working
-(settings + broadcast on, manage admins off).
+Owners (the `ADMIN` variable, several ids separated by a space) can do everything.
+Admins stored in the database keep their permissions (**Settings panel**, **Broadcast**,
+**Manage admins**); the owner list is the simplest way to give someone full access.
 
 ## Variables
 
