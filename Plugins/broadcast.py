@@ -1,62 +1,47 @@
-"""Broadcast.
+"""Broadcast and /send, same flow as the ChillFlizX file store bot.
 
-Two ways to start a broadcast, both using the same fast engine:
+/broadcast flow:
+  1. /broadcast  -> send as many messages as you want, one by one
+                    (text, photo, video, file, sticker, a whole album, anything)
+  2. /done       -> bot sends you a PREVIEW of everything, in order, with Confirm / Cancel
+  3. only Confirm starts the broadcast.   /cancel at any time stops everything.
+  /broadcast as a REPLY to a message (or album) skips step 1-2 and goes straight to the preview.
 
-1. /settings → Broadcast  (button builder: media / text with {mention} / buttons / pin)
-2. /broadcast             (send ANY messages: text, photo, video, file, sticker, whole albums...)
-       /broadcast → send your messages one by one → /done → you get a PREVIEW → Confirm
-       /broadcast as a reply to a message (or album) goes straight to the preview.
-       /cancel stops the flow at any time.
-   /send <user_id>        same flow, but the messages go to ONE user only.
-
-Engine: many users in parallel (BROADCAST_CONCURRENCY), FloodWait is waited out and
-retried, users who blocked the bot / deleted their account are removed from the user
-list, banned users never receive anything, only one broadcast runs at a time, and the
-admin sees live progress with a Stop button.
+/send <user_id> works exactly the same way, but the messages go ONLY to that one user.
 """
 import asyncio
-import datetime
-import html
 import secrets
 import time
 
-from pyrogram import Client, filters, enums, StopPropagation
+from pyrogram import Client, filters, StopPropagation
 from pyrogram.errors import FloodWait, InputUserDeactivated, UserIsBlocked, PeerIdInvalid
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import BROADCAST_CONCURRENCY
 from database import admin_perm, get_broadcast_targets, delete_user, is_banned
-from Plugins.contact import build_buttons_markup
 
-IDLE_SECONDS = 600        # stop waiting for more messages after 10 minutes of silence
+# How many users we message at once. Telegram's flood limits are mostly per chat,
+# so sending to many *different* users concurrently is safe and much faster.
+CONCURRENCY = BROADCAST_CONCURRENCY
+
+IDLE_SECONDS = 600        # the bot stops waiting if you send nothing for 10 minutes
 ALBUM_QUIET = 1.2         # seconds of silence that mean "the album is complete"
-MAX_MESSAGES = 50         # safety limit for one /broadcast
+MAX_MESSAGES = 50         # safety limit for one broadcast
 JOB_LIFETIME = 1800       # an unconfirmed preview expires after 30 minutes
-PROGRESS_EVERY = 3        # seconds between progress edits (Telegram rate-limits edits)
+FLOOD_RETRIES = 5         # how often one message is retried after a FloodWait
 
 _WAITING = {}   # admin_id -> {"t": last activity, "msgs": [Message], "ack": Task|None, "target": int|None}
 _JOBS = {}      # token -> {"admin": id, "units": [[Message]], "target": int|None, "t": created}
 _BG = set()
 _run_lock = None
-_stop_event = None
 
 
 def _lock() -> asyncio.Lock:
+    """Created lazily so it belongs to the running event loop."""
     global _run_lock
     if _run_lock is None:
         _run_lock = asyncio.Lock()
     return _run_lock
-
-
-def _stop() -> asyncio.Event:
-    global _stop_event
-    if _stop_event is None:
-        _stop_event = asyncio.Event()
-    return _stop_event
-
-
-def is_running() -> bool:
-    return _run_lock is not None and _run_lock.locked()
 
 
 def _spawn(coro):
@@ -66,149 +51,9 @@ def _spawn(coro):
     return task
 
 
-# ============================================================
-# ENGINE
-# ============================================================
-
-async def _send_with_retry(send_one, user_id: int, name: str):
-    """Returns (ok, reason). reason: Success / Blocked / Deleted / Error."""
-    flood_retries = 0
-    while True:
-        try:
-            await send_one(user_id, name)
-            return True, "Success"
-        except FloodWait as e:
-            flood_retries += 1
-            if flood_retries > 5:
-                return False, "Error"
-            await asyncio.sleep(e.value + 1)
-        except UserIsBlocked:
-            await delete_user(user_id)
-            return False, "Blocked"
-        except InputUserDeactivated:
-            await delete_user(user_id)
-            return False, "Deleted"
-        except PeerIdInvalid:
-            # NOT "blocked": it usually means the bot's peer cache doesn't know this
-            # user yet (common right after a redeploy). Never delete users for it.
-            return False, "Error"
-        except Exception:
-            return False, "Error"
-
-
-def _progress_text(title, total, done, counts, started, finished=False, stopped=False):
-    elapsed = datetime.timedelta(seconds=int(time.time() - started))
-    if finished:
-        head = f"**⛔ {title} stopped**" if stopped else f"**✅ {title} completed**"
-        head += f"\n_Time taken: {elapsed}_"
-    else:
-        head = f"**📢 {title} in progress...**\n_Elapsed: {elapsed}_"
-    return (
-        f"{head}\n\n"
-        f"• Total users: `{total}`\n"
-        f"• Done: `{done}` / `{total}`\n"
-        f"• Sent: `{counts['success']}`\n"
-        f"• Blocked the bot: `{counts['blocked']}`\n"
-        f"• Deleted account: `{counts['deleted']}`\n"
-        f"• Failed: `{counts['failed']}`"
-    )
-
-
-async def run_broadcast(client, status, targets: list, send_one, title: str = "Broadcast"):
-    """targets: [{user_id, first_name}]. send_one(user_id, first_name) sends one user's copy and raises on failure."""
-    async with _lock():
-        _stop().clear()
-        total = len(targets)
-        counts = {"success": 0, "blocked": 0, "deleted": 0, "failed": 0}
-        done = 0
-        started = time.time()
-        stop_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⛔ Stop", callback_data="bc_stop")]])
-
-        queue = asyncio.Queue()
-        for t in targets:
-            queue.put_nowait(t)
-
-        async def worker():
-            nonlocal done
-            while not _stop().is_set():
-                try:
-                    t = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    return
-                ok, reason = await _send_with_retry(send_one, t["user_id"], t["first_name"])
-                if ok:
-                    counts["success"] += 1
-                elif reason == "Blocked":
-                    counts["blocked"] += 1
-                elif reason == "Deleted":
-                    counts["deleted"] += 1
-                else:
-                    counts["failed"] += 1
-                done += 1
-
-        async def reporter():
-            while True:
-                await asyncio.sleep(PROGRESS_EVERY)
-                try:
-                    await status.edit_text(_progress_text(title, total, done, counts, started), reply_markup=stop_markup)
-                except Exception:
-                    pass
-
-        try:
-            await status.edit_text(_progress_text(title, total, 0, counts, started), reply_markup=stop_markup)
-        except Exception:
-            pass
-
-        progress_task = asyncio.create_task(reporter())
-        try:
-            await asyncio.gather(*[worker() for _ in range(max(1, min(BROADCAST_CONCURRENCY, total)))])
-        finally:
-            progress_task.cancel()
-
-        stopped = _stop().is_set() and done < total
-        try:
-            await status.edit_text(_progress_text(title, total, done, counts, started, finished=True, stopped=stopped))
-        except Exception:
-            pass
-        return counts
-
-
-@Client.on_callback_query(filters.regex("^bc_stop$") & admin_perm("can_broadcast"))
-async def bc_stop_cb(client, query):
-    if not is_running():
-        return await query.answer("No broadcast is running.", show_alert=True)
-    _stop().set()
-    await query.answer("Stopping... users already in progress will finish.", show_alert=True)
-
-
-# ============================================================
-# SENDERS
-# ============================================================
-
-def make_draft_sender(client, draft: dict):
-    """Sender for the /settings → Broadcast builder (media / text / buttons / pin, {mention} per user)."""
-    markup = build_buttons_markup(draft["buttons"])
-
-    async def send_one(user_id, name):
-        mention = f'<a href="tg://user?id={user_id}">{html.escape(name or "there")}</a>'
-        text = (draft["text"] or "").replace("{mention}", mention)
-        if draft["media_type"] == "photo":
-            sent = await client.send_photo(user_id, draft["media_file_id"], caption=text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
-        elif draft["media_type"] == "video":
-            sent = await client.send_video(user_id, draft["media_file_id"], caption=text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
-        else:
-            sent = await client.send_message(user_id, text, reply_markup=markup, parse_mode=enums.ParseMode.HTML)
-        if draft["pin"]:
-            try:
-                await sent.pin()
-            except Exception:
-                pass
-
-    return send_one
-
-
 def _to_units(msgs):
-    """Messages -> ordered units. A unit is one message, or one whole album (same media_group_id)."""
+    """Messages -> ordered list of units. A unit is one message, or one whole
+    album (consecutive messages with the same media_group_id)."""
     units = []
     last_gid = None
     for m in sorted(msgs, key=lambda m: m.id):
@@ -222,7 +67,7 @@ def _to_units(msgs):
 
 
 async def _deliver_unit(client, user_id, unit):
-    """Copy one message, or one whole album, to user_id (no 'Forwarded from')."""
+    """Send one message, or one whole album, to user_id as a copy (no 'Forwarded from')."""
     if len(unit) == 1:
         await unit[0].copy(chat_id=user_id)
         return
@@ -235,26 +80,39 @@ async def _deliver_unit(client, user_id, unit):
             await m.copy(chat_id=user_id)
 
 
-def make_copy_sender(client, units):
-    """Sender for /broadcast and /send: every unit in order. A FloodWait retries only the unit that waited, so nothing is sent twice."""
-    async def send_one(user_id, name):
+async def _deliver_with_retry(client, user_id, unit):
+    """One unit, FloodWait waited out. Only the unit that waited is retried, so nothing is sent twice."""
+    retries = 0
+    while True:
+        try:
+            return await _deliver_unit(client, user_id, unit)
+        except FloodWait as e:
+            retries += 1
+            if retries > FLOOD_RETRIES:
+                raise
+            await asyncio.sleep(e.value + 1)
+
+
+async def broadcast_messages(client, user_id, units):
+    """Send every unit to one user, in order. Returns (ok, reason)."""
+    try:
         for unit in units:
-            flood_retries = 0
-            while True:
-                try:
-                    await _deliver_unit(client, user_id, unit)
-                    break
-                except FloodWait as e:
-                    flood_retries += 1
-                    if flood_retries > 5:
-                        raise
-                    await asyncio.sleep(e.value + 1)
-    return send_one
+            await _deliver_with_retry(client, user_id, unit)
+        return True, "Success"
+    except InputUserDeactivated:
+        await delete_user(int(user_id))
+        return False, "Deleted"
+    except UserIsBlocked:
+        await delete_user(int(user_id))
+        return False, "Blocked"
+    except PeerIdInvalid:
+        # NOTE: PeerIdInvalid does NOT mean the user blocked/deleted the bot.
+        # It usually means the bot's local peer cache doesn't have this user yet
+        # (common right after a redeploy). Never delete the user for it.
+        return False, "Error"
+    except Exception:
+        return False, "Error"
 
-
-# ============================================================
-# /broadcast and /send  (copy mode)
-# ============================================================
 
 def _clean_old_jobs():
     now = time.time()
@@ -262,43 +120,97 @@ def _clean_old_jobs():
         _JOBS.pop(token, None)
 
 
+def _users(n):
+    return "User" if n == 1 else "Users"
+
+
+# ---------------- text helpers (every line bold, like the file store bot) ----------------
+
+def _bold(lines):
+    """Every non-empty line bold. The progress bar line is <code> (monospace)."""
+    return "\n".join("" if not l else (l if l.startswith("<code>") else f"<b>{l}</b>") for l in lines)
+
+
+def _bar(done, total, width=10):
+    pct = int(done * 100 / total) if total else 0
+    filled = round(width * pct / 100)
+    return "▰" * filled + "▱" * (width - filled), pct
+
+
+def _bar_line(done, total):
+    bar, pct = _bar(done, total)
+    return f"<code>{bar}</code> <b>{pct}%</b>"
+
+
+def _dur(sec):
+    sec = max(0, int(sec))
+    m, s = divmod(sec, 60)
+    h, m = divmod(m, 60)
+    return f"{h}h {m}m {s}s" if h else (f"{m}m {s}s" if m else f"{s}s")
+
+
+def _bot_text(c, total, final, secs):
+    ok = int(c["success"] * 100 / total) if total else 0
+    return _bold([
+        "✅ BROADCAST COMPLETED !!" if final else "📣 BROADCASTING…",
+        "",
+        _bar_line(c["done"], total),
+        f"⏱ Time: {_dur(secs)}",
+        "",
+        "📊 SUMMARY",
+        f"👥 Total: {total}",
+        f"✅ Success: {c['success']} ({ok}%)",
+        f"🚫 Blocked: {c['blocked']}",
+        f"🗑 Deleted: {c['deleted']}",
+        f"❌ Failed: {c['failed']}",
+    ])
+
+
+# ---------------- preview ----------------
+
 async def _make_preview(bot, admin_id, chat_id, units, target=None):
-    """Shows the admin exactly what will be sent (in order), then Confirm / Cancel."""
+    """Show the admin exactly what will be sent (in order), then Confirm / Cancel."""
     try:
         for unit in units:
             await _deliver_unit(bot, chat_id, unit)   # the very same code the real broadcast uses
     except Exception as e:
         return await bot.send_message(
             chat_id,
-            f"**❌ One of these messages can't be broadcast.**\n`{type(e).__name__}`\n\n"
-            "Send /broadcast again without that message."
+            "<b>❌ One Of These Messages Can't Be Broadcast.</b>\n"
+            f"<code>{type(e).__name__}</code>\n\n"
+            "<b>Send /broadcast Again Without That Message.</b>",
         )
 
     _clean_old_jobs()
     token = secrets.token_hex(4)
     _JOBS[token] = {"admin": admin_id, "units": units, "target": target, "t": time.time()}
     n = len(units)
-    if n == 1 and len(units[0]) == 1:
-        what = "1 message"
-    elif n == 1:
-        what = f"1 album of {len(units[0])} items"
-    else:
-        what = f"{n} messages"
-    order = " in this order" if n > 1 else ""
+    what = "1 Message" if n == 1 and len(units[0]) == 1 else (
+        f"1 Album · {len(units[0])} Items" if n == 1 else f"{n} Messages (In Order)")
+    cancel = [InlineKeyboardButton("❌ Cancel", callback_data=f"bc_no:{token}")]
+
     if target:
-        who = f"ONLY to user `{target}`"
-        ask, yes = "Is this exactly what you want to send?", "✅ Confirm send"
-    else:
-        who = f"to `{len(await get_broadcast_targets())}` users"
-        ask, yes = "Is this exactly what you want to broadcast?", "✅ Confirm broadcast"
-    await bot.send_message(
-        chat_id,
-        f"**👆 Preview: {what} will be sent {who}{order}.**\n\n**{ask}**",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton(yes, callback_data=f"bc_yes:{token}"),
-            InlineKeyboardButton("❌ Cancel", callback_data=f"bc_no:{token}"),
-        ]]),
-    )
+        text = (
+            "<b>👆 SEND PREVIEW !!</b>\n\n"
+            f"<b>📦 Content: {what}</b>\n\n"
+            f"<b>👤 User:</b> <code>{target}</code> <b>only</b>\n\n"
+            "<b>⚠️ Check Once — Sending can't be undone.</b>"
+        )
+        buttons = [InlineKeyboardButton("✅ Confirm Send", callback_data=f"bc_yes:{token}")]
+        return await bot.send_message(chat_id, text, reply_markup=InlineKeyboardMarkup([buttons, cancel]))
+
+    mine = len(await get_broadcast_targets())
+    text = _bold([
+        "👆 BROADCAST PREVIEW !!",
+        "",
+        f"📦 Content: {what}",
+        "",
+        f"👥 Send To: {mine} {_users(mine)}",
+        "",
+        "⚠️ Check Once — Sending can't be undone.",
+    ])
+    buttons = [InlineKeyboardButton("✅ Confirm Broadcast", callback_data=f"bc_yes:{token}")]
+    await bot.send_message(chat_id, text, reply_markup=InlineKeyboardMarkup([buttons, cancel]))
 
 
 async def _messages_from_reply(bot, replied):
@@ -316,6 +228,8 @@ def _reset_waiting(admin_id):
         old["ack"].cancel()
 
 
+# ---------------- /broadcast and /send ----------------
+
 @Client.on_message(filters.command("broadcast") & filters.private & admin_perm("can_broadcast"))
 async def broadcast_cmd(bot, message):
     admin_id = message.from_user.id
@@ -327,10 +241,9 @@ async def broadcast_cmd(bot, message):
 
     _WAITING[admin_id] = {"t": time.time(), "msgs": [], "ack": None, "target": None}
     await message.reply_text(
-        "**📣 Send the messages you want to broadcast, one by one.**\n"
-        "Text, photo, video, file, sticker, a whole album, anything works.\n\n"
-        "/done when finished (you get a preview first)\n"
-        "/cancel to stop"
+        "<b>📣 Send Your Messages One By One.\n\n"
+        "/done - Preview\n"
+        "/cancel - Stop</b>"
     )
 
 
@@ -343,12 +256,15 @@ async def send_cmd(bot, message):
     arg = message.command[1] if len(message.command) > 1 else ""
     if not (arg.isdigit() and 5 <= len(arg) <= 16):
         return await message.reply_text(
-            "**Usage:**\n`/send user_id`, then send your messages, then /done\n"
-            "Or reply to a message with `/send user_id`"
+            "<b>Usage:</b>\n"
+            "<code>/send user_id</code> <b>- Then Send Your Messages, Then /done</b>\n"
+            "<b>Or Reply To A Message With</b> <code>/send user_id</code>"
         )
     target = int(arg)
     if await is_banned(target):
-        return await message.reply_text("**🚫 This user is banned.**\nUse /unban first if you really want to message them.")
+        return await message.reply_text(
+            "<b>🚫 This User Is Banned.\nUse /unban First If You Really Want To Message Them.</b>"
+        )
 
     if message.reply_to_message:
         msgs = await _messages_from_reply(bot, message.reply_to_message)
@@ -356,10 +272,9 @@ async def send_cmd(bot, message):
 
     _WAITING[admin_id] = {"t": time.time(), "msgs": [], "ack": None, "target": target}
     await message.reply_text(
-        f"**📨 Send the messages for user** `{target}`**, one by one.**\n"
-        "Text, photo, video, file, sticker, a whole album, anything works.\n\n"
-        "/done when finished (you get a preview first)\n"
-        "/cancel to stop"
+        f"<b>📨 Send Your Messages For User</b> <code>{target}</code><b>, One By One.\n\n"
+        "/done - Preview\n"
+        "/cancel - Stop</b>"
     )
 
 
@@ -372,8 +287,9 @@ async def _ack(admin_id, chat_id, bot, delay):
     units = _to_units(state["msgs"])
     await bot.send_message(
         chat_id,
-        f"**✅ Added. {len(units)} message(s) ready.**\n"
-        "Send more, or /done to preview, /cancel to stop.",
+        f"<b>✅ {len(units)} Message(s) Ready.\n\n"
+        "/done - Preview\n"
+        "/cancel - Stop</b>",
     )
 
 
@@ -398,21 +314,21 @@ async def _capture_broadcast_message(bot, message):
 
     if first_word == "/cancel":
         _reset_waiting(user.id)
-        await message.reply_text("**Cancelled.**")
+        await message.reply_text("<b>Cancelled.</b>")
         raise StopPropagation
 
     if first_word == "/done":
         if state["ack"]:
             state["ack"].cancel()
         if not state["msgs"]:
-            await message.reply_text("**Nothing added yet. Send your message or /cancel.**")
+            await message.reply_text("<b>Nothing Added Yet. Send Your Message Or /cancel.</b>")
             raise StopPropagation
         _WAITING.pop(user.id, None)
         await _make_preview(bot, user.id, message.chat.id, _to_units(state["msgs"]), state.get("target"))
         raise StopPropagation
 
     if len(state["msgs"]) >= MAX_MESSAGES:
-        await message.reply_text(f"**Limit reached ({MAX_MESSAGES} messages). Send /done or /cancel.**")
+        await message.reply_text(f"<b>Limit Reached ({MAX_MESSAGES} Messages). Send /done Or /cancel.</b>")
         raise StopPropagation
 
     state["msgs"].append(message)
@@ -431,7 +347,7 @@ async def broadcast_answer(bot, query):
     if not job:
         await query.answer("This preview expired. Run /broadcast again.", show_alert=True)
         try:
-            await query.message.edit_text("**⌛ Preview expired. Run /broadcast again.**")
+            await query.message.edit_text("<b>⌛ Preview Expired. Run /broadcast Again.</b>")
         except Exception:
             pass
         return
@@ -441,48 +357,86 @@ async def broadcast_answer(bot, query):
     if action == "bc_no":
         _JOBS.pop(token, None)
         await query.answer("Cancelled.")
-        return await query.message.edit_text("**❌ Cancelled. Nothing was sent.**")
+        return await query.message.edit_text("<b>❌ Cancelled. Nothing Was Sent.</b>")
 
     if job.get("target"):
         _JOBS.pop(token, None)   # one confirm = one send
         await query.answer("Sending...")
         return await _run_direct(bot, query.message, job["target"], job["units"])
 
-    if is_running():
+    if _lock().locked():
         return await query.answer("A broadcast is already running. Wait for it to finish.", show_alert=True)
 
     _JOBS.pop(token, None)   # one confirm = one broadcast (a second tap finds nothing)
     await query.answer("Broadcasting...")
-    targets = await get_broadcast_targets()
-    await run_broadcast(bot, query.message, targets, make_copy_sender(bot, job["units"]))
+    await _run_broadcast(bot, query.message, job["units"])
 
 
-async def _run_direct(bot, status, user_id, units):
+async def _run_direct(bot, sts, user_id, units):
     """Send to one user and tell the admin exactly what happened."""
-    await status.edit_text("**Sending...**")
+    await sts.edit_text("<b>Sending...</b>")
     sent = 0
     reason = None
     try:
         for unit in units:
-            while True:
-                try:
-                    await _deliver_unit(bot, user_id, unit)
-                    break
-                except FloodWait as e:
-                    await asyncio.sleep(e.value + 1)
+            await _deliver_with_retry(bot, user_id, unit)
             sent += 1
     except UserIsBlocked:
-        reason = "That user has blocked the bot."
+        reason = "That User Has Blocked The Bot."
     except InputUserDeactivated:
-        reason = "That account is deleted."
+        reason = "That Account Is Deleted."
     except PeerIdInvalid:
-        reason = "The bot can't find this user. Check the ID. The user must have started the bot."
+        reason = "The Bot Can't Find This User. Check The ID. The User Must Have Started The Bot."
     except Exception as e:
         reason = f"Failed ({type(e).__name__})."
 
     if reason is None:
-        return await status.edit_text(f"**✅ Sent to user** `{user_id}`**. ({sent} message(s))**")
-    await status.edit_text(
-        f"**❌ Not sent to user** `{user_id}`\n**{reason}**\n"
-        f"Delivered before the error: {sent} of {len(units)}"
+        return await sts.edit_text(f"<b>✅ Sent To User</b> <code>{user_id}</code><b>. ({sent} Message(s))</b>")
+    await sts.edit_text(
+        f"<b>❌ Not Sent To User</b> <code>{user_id}</code>\n<b>{reason}</b>\n"
+        f"<b>Delivered Before The Error: {sent} Of {len(units)}</b>"
     )
+
+
+async def _send_all(bot, targets, units, on_progress=None, every=20):
+    """Send `units` to every target ({"user_id": ...}), CONCURRENCY users at a time, and return the counts.
+    on_progress(counts) is awaited every `every` finished users."""
+    counts = {"done": 0, "success": 0, "blocked": 0, "deleted": 0, "failed": 0}
+    sem = asyncio.Semaphore(CONCURRENCY)
+
+    async def _send(uid):
+        async with sem:
+            return await broadcast_messages(bot, uid, units)
+
+    tasks = [asyncio.create_task(_send(t["user_id"])) for t in targets]
+    for coro in asyncio.as_completed(tasks):
+        ok, reason = await coro
+        if ok:
+            counts["success"] += 1
+        elif reason == "Blocked":
+            counts["blocked"] += 1
+        elif reason == "Deleted":
+            counts["deleted"] += 1
+        else:
+            counts["failed"] += 1
+        counts["done"] += 1
+        if on_progress and not counts["done"] % every:
+            try:
+                await on_progress(counts)
+            except Exception:
+                pass
+    return counts
+
+
+async def _run_broadcast(bot, sts, units):
+    async with _lock():
+        targets = await get_broadcast_targets()
+        start_time = time.time()
+        total_users = len(targets)
+        await sts.edit_text("<b>📣 BROADCASTING…</b>")
+
+        async def _progress(c):
+            await sts.edit_text(_bot_text(c, total_users, False, time.time() - start_time))
+
+        c = await _send_all(bot, targets, units, _progress)
+        await sts.edit_text(_bot_text(c, total_users, True, time.time() - start_time))
