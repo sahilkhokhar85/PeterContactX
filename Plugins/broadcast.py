@@ -1,10 +1,11 @@
 """Broadcast and /send, same flow as the ChillFlizX file store bot.
 
 /broadcast flow:
-  1. /broadcast  -> send as many messages as you want, one by one
+  1. /broadcast  -> the bot waits (only a Cancel button), send as many messages as you want, one by one
                     (text, photo, video, file, sticker, a whole album, anything)
-  2. /done       -> bot sends you a PREVIEW of everything, in order, with Confirm / Cancel
-  3. only Confirm starts the broadcast.   /cancel at any time stops everything.
+  2. After the first message the bot shows "Ready" with Done / Cancel buttons.
+     Done -> a PREVIEW of everything, in order, with Confirm / Cancel
+  3. only Confirm starts the broadcast.
   /broadcast as a REPLY to a message (or album) skips step 1-2 and goes straight to the preview.
 
 /send <user_id> works exactly the same way, but the messages go ONLY to that one user.
@@ -246,8 +247,22 @@ async def _messages_from_reply(bot, replied):
 
 def _reset_waiting(admin_id):
     old = _WAITING.pop(admin_id, None)
-    if old and old.get("ack"):
-        old["ack"].cancel()
+    if old:
+        if old.get("ack"):
+            old["ack"].cancel()
+        _spawn(_close_collect(old))
+
+
+async def _close_collect(state, keep_id=None):
+    """Remove the collecting messages (the prompt and the 'Ready' message) from the chat."""
+    for key in ("prompt_msg", "ack_msg"):
+        msg = state.get(key)
+        if msg and getattr(msg, "id", None) != keep_id:
+            await _drop(msg)
+
+
+def _cancel_markup():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="bcw_cancel")]])
 
 
 # ---------------- /broadcast and /send ----------------
@@ -261,11 +276,9 @@ async def broadcast_cmd(bot, message):
         msgs = await _messages_from_reply(bot, message.reply_to_message)
         return await _make_preview(bot, admin_id, message.chat.id, _to_units(msgs))
 
-    _WAITING[admin_id] = {"t": time.time(), "msgs": [], "ack": None, "target": None}
-    await message.reply_text(
-        "<b>📣 Send Your Messages One By One.\n\n"
-        "/done - Preview\n"
-        "/cancel - Stop</b>"
+    state = _WAITING[admin_id] = {"t": time.time(), "msgs": [], "ack": None, "target": None}
+    state["prompt_msg"] = await message.reply_text(
+        "<b>📣 Send Your Messages One By One.</b>", reply_markup=_cancel_markup()
     )
 
 
@@ -291,11 +304,10 @@ async def send_cmd(bot, message):
         msgs = await _messages_from_reply(bot, message.reply_to_message)
         return await _make_preview(bot, admin_id, message.chat.id, _to_units(msgs), target)
 
-    _WAITING[admin_id] = {"t": time.time(), "msgs": [], "ack": None, "target": target}
-    await message.reply_text(
-        f"<b>📨 Send Your Messages To</b> {await _user_label(bot, target)}<b>.\n\n"
-        "/done - Preview\n"
-        "/cancel - Stop</b>"
+    state = _WAITING[admin_id] = {"t": time.time(), "msgs": [], "ack": None, "target": target}
+    state["prompt_msg"] = await message.reply_text(
+        f"<b>📨 Send Your Messages To</b> {await _user_label(bot, target)}<b>.</b>",
+        reply_markup=_cancel_markup(),
     )
 
 
@@ -347,25 +359,11 @@ async def _capture_broadcast_message(bot, message):
 
     state["t"] = time.time()
 
-    if first_word == "/cancel":
-        _reset_waiting(user.id)
-        await _drop(state.get("ack_msg"))
-        await message.reply_text("<b>Cancelled.</b>")
-        raise StopPropagation
-
-    if first_word == "/done":
-        if state["ack"]:
-            state["ack"].cancel()
-        if not state["msgs"]:
-            await message.reply_text("<b>Nothing Added Yet. Send Your Message Or /cancel.</b>")
-            raise StopPropagation
-        _WAITING.pop(user.id, None)
-        await _drop(state.get("ack_msg"))
-        await _make_preview(bot, user.id, message.chat.id, _to_units(state["msgs"]), state.get("target"))
-        raise StopPropagation
+    if first_word in ("/done", "/cancel"):
+        raise StopPropagation   # these are buttons now: ignored, never sent as a message
 
     if len(state["msgs"]) >= MAX_MESSAGES:
-        await message.reply_text(f"<b>Limit Reached ({MAX_MESSAGES} Messages). Send /done Or /cancel.</b>")
+        await message.reply_text(f"<b>Limit Reached ({MAX_MESSAGES} Messages). Tap Done Or Cancel.</b>")
         raise StopPropagation
 
     state["msgs"].append(message)
@@ -378,7 +376,7 @@ async def _capture_broadcast_message(bot, message):
 
 @Client.on_callback_query(filters.regex(r"^bcw_(done|cancel)$") & admin_perm("can_broadcast"))
 async def collect_buttons(bot, query):
-    """The Done / Cancel buttons under the 'Ready' message (same as /done and /cancel)."""
+    """Cancel (under the prompt and under the 'Ready' message) and Done (under 'Ready')."""
     user_id = query.from_user.id
     state = _WAITING.get(user_id)
     if not state or time.time() - state["t"] > IDLE_SECONDS:
@@ -387,7 +385,10 @@ async def collect_buttons(bot, query):
         await _drop(query.message)
         return
     if query.data == "bcw_cancel":
-        _reset_waiting(user_id)
+        _WAITING.pop(user_id, None)
+        if state["ack"]:
+            state["ack"].cancel()
+        await _close_collect(state, keep_id=query.message.id)
         await query.answer("Cancelled.")
         try:
             await query.message.edit_text("<b>Cancelled.</b>")
@@ -401,6 +402,7 @@ async def collect_buttons(bot, query):
         state["ack"].cancel()
     await query.answer()
     chat_id = query.message.chat.id
+    await _close_collect(state)
     await _drop(query.message)
     await _make_preview(bot, user_id, chat_id, _to_units(state["msgs"]), state.get("target"))
 
