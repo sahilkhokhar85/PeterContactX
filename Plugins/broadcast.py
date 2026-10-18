@@ -18,6 +18,7 @@ from pyrogram.errors import FloodWait, InputUserDeactivated, UserIsBlocked, Peer
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import BROADCAST_CONCURRENCY
+from logchannel import log_text
 from database import admin_perm, get_broadcast_targets, delete_user, is_banned
 
 # How many users we message at once. Telegram's flood limits are mostly per chat,
@@ -193,7 +194,7 @@ async def _make_preview(bot, admin_id, chat_id, units, target=None):
         text = (
             "<b>👆 SEND PREVIEW !!</b>\n\n"
             f"<b>📦 Content: {what}</b>\n\n"
-            f"<b>👤 User:</b> <code>{target}</code> <b>only</b>\n\n"
+            f"<b>👤 Send To:</b> <code>{target}</code>\n\n"
             "<b>⚠️ Check Once — Sending can't be undone.</b>"
         )
         buttons = [InlineKeyboardButton("✅ Confirm Send", callback_data=f"bc_yes:{token}")]
@@ -255,16 +256,10 @@ async def send_cmd(bot, message):
 
     arg = message.command[1] if len(message.command) > 1 else ""
     if not (arg.isdigit() and 5 <= len(arg) <= 16):
-        return await message.reply_text(
-            "<b>Usage:</b>\n"
-            "<code>/send user_id</code> <b>- Then Send Your Messages, Then /done</b>\n"
-            "<b>Or Reply To A Message With</b> <code>/send user_id</code>"
-        )
+        return await message.reply_text("<b>Usage:</b> <code>/send user_id</code>")
     target = int(arg)
     if await is_banned(target):
-        return await message.reply_text(
-            "<b>🚫 This User Is Banned.\nUse /unban First If You Really Want To Message Them.</b>"
-        )
+        return await message.reply_text("<b>🚫 This User Is Banned.</b>")
 
     if message.reply_to_message:
         msgs = await _messages_from_reply(bot, message.reply_to_message)
@@ -272,8 +267,8 @@ async def send_cmd(bot, message):
 
     _WAITING[admin_id] = {"t": time.time(), "msgs": [], "ack": None, "target": target}
     await message.reply_text(
-        f"<b>📨 Send Your Messages For User</b> <code>{target}</code><b>, One By One.\n\n"
-        "/done - Preview\n"
+        f"<b>📨 Send Your Messages For</b> <code>{target}</code>\n\n"
+        "<b>/done - Preview\n"
         "/cancel - Stop</b>"
     )
 
@@ -374,7 +369,7 @@ async def broadcast_answer(bot, query):
 
 async def _run_direct(bot, sts, user_id, units):
     """Send to one user and tell the admin exactly what happened."""
-    await sts.edit_text("<b>Sending...</b>")
+    await sts.edit_text("<b>📨 SENDING…</b>")
     sent = 0
     reason = None
     try:
@@ -382,20 +377,20 @@ async def _run_direct(bot, sts, user_id, units):
             await _deliver_with_retry(bot, user_id, unit)
             sent += 1
     except UserIsBlocked:
-        reason = "That User Has Blocked The Bot."
+        reason = "User Blocked The Bot."
     except InputUserDeactivated:
-        reason = "That Account Is Deleted."
+        reason = "Account Is Deleted."
     except PeerIdInvalid:
-        reason = "The Bot Can't Find This User. Check The ID. The User Must Have Started The Bot."
+        reason = "User Not Found. Check The ID."
     except Exception as e:
         reason = f"Failed ({type(e).__name__})."
 
     if reason is None:
-        return await sts.edit_text(f"<b>✅ Sent To User</b> <code>{user_id}</code><b>. ({sent} Message(s))</b>")
-    await sts.edit_text(
-        f"<b>❌ Not Sent To User</b> <code>{user_id}</code>\n<b>{reason}</b>\n"
-        f"<b>Delivered Before The Error: {sent} Of {len(units)}</b>"
-    )
+        text = f"<b>✅ SENT !!</b>\n\n<b>👤 User:</b> <code>{user_id}</code>"
+    else:
+        text = f"<b>❌ NOT SENT !!</b>\n\n<b>👤 User:</b> <code>{user_id}</code>\n<b>{reason}</b>"
+    await sts.edit_text(text)
+    log_text(bot, text)
 
 
 async def _send_all(bot, targets, units, on_progress=None, every=20):
@@ -439,4 +434,6 @@ async def _run_broadcast(bot, sts, units):
             await sts.edit_text(_bot_text(c, total_users, False, time.time() - start_time))
 
         c = await _send_all(bot, targets, units, _progress)
-        await sts.edit_text(_bot_text(c, total_users, True, time.time() - start_time))
+        final_text = _bot_text(c, total_users, True, time.time() - start_time)
+        await sts.edit_text(final_text)
+        log_text(bot, final_text)
