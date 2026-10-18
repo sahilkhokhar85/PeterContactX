@@ -21,7 +21,6 @@ banned_col = db.banned
 auto_replies_col = db.auto_replies
 force_channels_col = db.force_channels
 join_requests_col = db.join_requests
-chat_history_col = db.chat_history
 content_col = db.content_index
 indexed_channels_col = db.indexed_channels
 msg_map_col = db.msg_map
@@ -369,29 +368,6 @@ async def get_join_request(user_id: int, chat_id: int):
 
 async def clear_join_request(user_id: int, chat_id: int):
     await join_requests_col.delete_many({"user_id": user_id, "chat_id": chat_id})
-
-
-# ---------------- AI Chat History ----------------
-
-MAX_HISTORY_TURNS = 8  # number of user+model exchange pairs kept per user
-
-async def get_chat_history(user_id: int) -> list:
-    doc = await chat_history_col.find_one({"user_id": user_id})
-    return doc["turns"] if doc else []
-
-async def add_chat_turns(user_id: int, user_text: str, model_text: str):
-    turns = await get_chat_history(user_id)
-    turns.append({"role": "user", "text": user_text})
-    turns.append({"role": "model", "text": model_text})
-    turns = turns[-(MAX_HISTORY_TURNS * 2):]
-    await chat_history_col.update_one(
-        {"user_id": user_id},
-        {"$set": {"user_id": user_id, "turns": turns}},
-        upsert=True
-    )
-
-async def clear_chat_history(user_id: int):
-    await chat_history_col.delete_one({"user_id": user_id})
 
 
 # ---------------- Content Index (scanned channel content, searchable) ----------------
