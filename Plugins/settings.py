@@ -92,9 +92,9 @@ async def render_ar_menu():
     buttons.append([InlineKeyboardButton("➕ Add Keyword", callback_data="ar_add")])
     buttons.append([InlineKeyboardButton("⬅ Back", callback_data="menu")])
     text = (
-        "<b>🔤 Automatic Replies\n\n"
-        "Send An Automatic Reply When A User Types A Keyword.\n"
-        "Tap A Keyword To Remove It.</b>"
+        "<b>🔤 Automatic Replies !!\n\n"
+        "💬 Bot Replies When A User Types A Keyword\n\n"
+        "👇 Tap A Keyword To Remove It.</b>"
     )
     return text, InlineKeyboardMarkup(buttons)
 
@@ -130,10 +130,10 @@ async def render_fj_menu():
     buttons.append([InlineKeyboardButton("➕ Add Chat", callback_data="fj_add")])
     buttons.append([InlineKeyboardButton("⬅ Back", callback_data="menu")])
     text = (
-        "<b>🔑 Force Join\n\n"
-        "Users Must Join These Chats To Use The Bot.\n"
-        "📢 = Must Be A Member • 📨 = Join Request Is Enough\n"
-        "Tap A Chat To Remove It.</b>"
+        "<b>🔑 Force Join !!\n\n"
+        "📢 Normal: User Must Join\n"
+        "📨 Request: Request Is Enough\n\n"
+        "👇 Tap A Chat To Remove It.</b>"
     )
     return text, InlineKeyboardMarkup(buttons)
 
@@ -203,10 +203,10 @@ async def stats_cb(client: Client, query: CallbackQuery):
     banned = await banned_users_count()
     admins = await admins_count()
     await edit(query, 
-        "<b>📊 Statistics</b>\n\n"
-        f"<b>• Total Users:</b> <code>{total}</code>\n"
-        f"<b>• Banned Users:</b> <code>{banned}</code>\n"
-        f"<b>• Administrators:</b> <code>{admins}</code>",
+        "<b>📊 Statistics !!</b>\n\n"
+        f"<b>👤 Total Users:</b> <code>{total}</code>\n"
+        f"<b>🚫 Banned Users:</b> <code>{banned}</code>\n"
+        f"<b>👮 Administrators:</b> <code>{admins}</code>",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", callback_data="menu")]]),
         parse_mode=HTML
     )
