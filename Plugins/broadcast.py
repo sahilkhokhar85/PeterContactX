@@ -261,6 +261,17 @@ async def _close_collect(state, keep_id=None):
             await _drop(msg)
 
 
+async def _strip_prompt(state):
+    """After the first message the prompt loses its Cancel button (Cancel now lives under 'Ready')."""
+    msg = state.get("prompt_msg")
+    if msg and not state.get("prompt_stripped"):
+        state["prompt_stripped"] = True
+        try:
+            await msg.edit_reply_markup(None)
+        except Exception:
+            pass
+
+
 def _cancel_markup():
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="bcw_cancel")]])
 
@@ -367,6 +378,7 @@ async def _capture_broadcast_message(bot, message):
         raise StopPropagation
 
     state["msgs"].append(message)
+    _spawn(_strip_prompt(state))
     if state["ack"]:
         state["ack"].cancel()
     # a single message is acknowledged at once, an album after its last item arrived
