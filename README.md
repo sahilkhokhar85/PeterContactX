@@ -1,135 +1,97 @@
-# Telegram Contact Bot
+<p align="center">
+  <img src="https://files.catbox.moe/glbqmw.png" alt="Contact Bot" width="320">
+</p>
 
-<b>Chat With Owner Directly Through This Bot.</b>
+<h1 align="center">💬 Telegram Contact Bot</h1>
 
-![Typing SVG](https://readme-typing-svg.herokuapp.com/?lines=Welcome+To+Telegram+Contact+Bot+!)
-
-## Features
-
-- [x] Forward User Messages To Owner/Admins
-- [x] Reply To User Directly From Owner/Admin Chat (reply mapping is stored in MongoDB, so old messages stay repliable after a restart and for users who hide their identity)
-- [x] Anti-Spam Rate Limit (per user, configurable)
-- [x] Restart Bot Anytime (Admin Only)
-- [x] Settings Panel (`/settings`): Automatic Replies, Force Join, Statistics
-- [x] Automatic Keyword Replies (whole-word match, so `hi` does not fire on `this`)
-- [x] Force Join One Or More Channels (normal mode **and** join-request mode, cached checks)
-- [x] Permanent Start Message With Image (set in `texts.py`)
-- [x] Fast Broadcast: parallel sending, FloodWait handling, preview + confirm, live progress bar and summary, auto-cleanup of users who blocked the bot
-- [x] `/broadcast` And `/send <user_id>`: send any message type (text, photo, video, file, sticker, albums) with a preview before sending (same flow as the ChillFlizX file store bot)
-- [x] Multi-Admin Support With Permissions (settings / broadcast / manage admins)
-- [x] Silent Ban Guard, Bulk `/ban` `/unban` (ids, `.txt` file, or reply), `/banlist` Export
-- [x] `/status` And `/info`
-- [x] Every Bot Message Is Bold
-- [x] Log Channel: records every message with name / id / username, even for users who hide their profile
-- [x] Edited Messages Are Synced Both Ways
-- [x] 24x7 Uptime With Built-In Web Server
-
-## Commands
-
-```
-start - Start the bot
-settings - Control panel
-broadcast - Send to all users
-send - Send to one user
-ban - Ban users
-unban - Unban users
-banlist - Download ban list
-status - Bot status
-info - User info
-restart - Restart bot
-```
-
-`/settings` has three buttons: **Automatic Replies**, **Force Join** and **Statistics**.
-The `/start` message (image + text) is fixed in `texts.py`; change it there and redeploy.
-
-### Broadcast flow (`/broadcast`)
-
-1. Send `/broadcast`, then send as many messages as you want, one by one (albums included).
-2. Send `/done` and the bot shows you a **preview** of everything, in order.
-3. Tap **Confirm Broadcast**. A live progress bar and a summary (success / blocked / deleted / failed) are shown.
-
-`/broadcast` as a reply to a message (or album) jumps straight to the preview.
-`/cancel` stops the flow at any time. `/send <user_id>` works the same but to one user only.
-
-### Admin permissions
-
-Owners (the `ADMIN` variable, several ids separated by a space) can do everything.
-Admins stored in the database keep their permissions (**Settings panel**, **Broadcast**,
-**Manage admins**); the owner list is the simplest way to give someone full access.
-
-## Variables
-
-* `API_ID` API Id from my.telegram.org
-* `API_HASH` API Hash from my.telegram.org
-* `BOT_TOKEN` Bot token from @BotFather
-* `ADMIN` Telegram Account Id of Owner (several owners: separate with a space, e.g. `123456 789012`)
-* `DATABASE_URI` MongoDB connection string (required — used for users, admins, bans, settings)
-* `DATABASE_NAME` MongoDB database name (optional, defaults to `MRNContactBot`)
-* `LOG_CHANNEL` Private channel id (e.g. `-1001234567890`) where every message, edit, reply, ban and broadcast is recorded with the user's name / id / username. The bot must be an admin there. Optional.
-
-Optional tuning (all have sensible defaults):
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `GEMINI_API_KEY` | empty | Enables AI replies when set |
-| `RATE_LIMIT_MESSAGES` | `6` | Max messages per user in the window (`0` = no limit) |
-| `RATE_LIMIT_SECONDS` | `10` | Length of the rate-limit window |
-| `BROADCAST_CONCURRENCY` | `25` | Users messaged at the same time during a broadcast |
-| `INDEX_MIN_SCORE` | `1.0` | Minimum match score before an indexed post is sent as the answer (raise it if unrelated posts are sent) |
-| `INDEX_MIN_QUERY_CHARS` | `4` | Shorter user texts never trigger an indexed-post answer |
-| `MESSAGE_MAP_DAYS` | `30` | How long "which user sent this forwarded message" is remembered |
-
-Force-join channels are managed from `/settings → Force join` (no env var needed). For a
-**join-request** channel the bot must be an admin there with the "Invite users" right.
-
-### Railway
-
-`railway.json` is included (start command `python3 bot.py`, health check on `/`, restart on failure).
-Set the variables above in Railway and deploy.
-
-
-## How To Deploy
-
-* Get `API_ID` & `API_HASH` from [my.telegram.org](https://my.telegram.org)
-* Get `BOT_TOKEN` from [@BotFather](https://t.me/BotFather)
-* Get your `ADMIN` id from [@userinfobot](https://t.me/userinfobot)
-* Deploy using any one method below, fill the variables, and you're done.
-
-### Deploy To Heroku
-
-[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/Steve-Botz/TG-Contact-Bot)
-
-### Deploy To Koyeb
-
-[![Deploy](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=git&repository=github.com/Steve-Botz/TG-Contact-Bot&branch=main&run_command=python3+bot.py)
-
-### Deploy To Render
-
-[![Deploy](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Steve-Botz/TG-Contact-Bot)
-
-### Run Cmd
-```
-python3 bot.py
-```
-### Deploy Locally
-
-```
-git clone https://github.com/Steve-Botz/TG-Contact-Bot
-cd TG-Contact-Bot
-pip install -r requirements.txt
-python3 bot.py
-```
-
-## Contact Developer  👨‍💻
-
-[![Contact Developer](https://img.shields.io/badge/Contact-Developer-blue?logo=telegram)](https://t.me/AmaniContactBot)    
-[![Telegram Channel](https://img.shields.io/badge/Telegram-Updates%20Channel-blue?logo=telegram)](https://t.me/SteveBotz)  
-[![Support Group](https://img.shields.io/badge/Telegram-Support%20Group-blue?logo=telegram)](https://t.me/SteveBotzSupport)
-
-Join My <a href='https://t.me/SteveBotz'>Update Channel</a> For Latest Updates & Features.
+<p align="center">
+  <img src="https://readme-typing-svg.herokuapp.com/?lines=Welcome+To+The+Contact+Bot;Talk+To+The+Owner+Directly;Replies+%7C+Edits+%7C+Broadcast+%7C+Log+Channel;Thank+You!&center=true&width=560" alt="Typing SVG">
+</p>
 
 ---
 
-<div align="center">
-<b>⭐ Star this repository if you found it helpful! ⭐</b>
-</div>
+## ✨ What This Bot Can Do
+
+<details>
+<summary><b>👉 Tap to open the feature list</b></summary>
+
+<br>
+
+| | Feature |
+|---|---|
+| 💬 | Users message the bot, the owner and admins get it and reply from the bot chat |
+| ✏️ | Edits are synced: an edited reply updates the user's message, an edited user message is sent again marked as edited |
+| 🖼 | Permanent start message with a picture (`texts.py`) |
+| 🔤 | Automatic keyword replies |
+| 📢 | Force Join (normal mode + join request mode) |
+| 📣 | Fast broadcast with preview and `/send` to one user |
+| 🚫 | Ban / unban users, bot status and user info |
+| 🗒 | Log channel: every message with name, id and username, even for users who hide their profile |
+| 🛡 | Anti-spam rate limit |
+| 👥 | Settings panel (`/settings`) and multiple admins with permissions |
+
+</details>
+
+## 🔧 Environment Variables
+
+> ⚠️ `API_HASH`, `BOT_TOKEN` and `DATABASE_URI` have no default value. Set them in your host's variables and never commit them.
+
+<details>
+<summary><b>👉 Tap to open the variable list</b></summary>
+
+<br>
+
+| Variable | Meaning |
+|---|---|
+| `API_ID` | From [my.telegram.org](https://my.telegram.org) |
+| `API_HASH` | From [my.telegram.org](https://my.telegram.org) |
+| `BOT_TOKEN` | From [BotFather](https://t.me/BotFather) |
+| `ADMIN` | Owner id, several owners separated by a space |
+| `DATABASE_URI` | MongoDB connection URL |
+| `DATABASE_NAME` | MongoDB database name (optional, default `MRNContactBot`) |
+| `LOG_CHANNEL` | Log channel id (starts with `-100`), the bot must be an admin there. Optional |
+| `RATE_LIMIT_MESSAGES` | Max messages per user in the window (default `6`, `0` = no limit) |
+| `RATE_LIMIT_SECONDS` | Length of that window (default `10`) |
+| `BROADCAST_CONCURRENCY` | Users messaged at the same time in a broadcast (default `25`) |
+| `MESSAGE_MAP_DAYS` | Days that replies and edits keep working for old messages (default `30`) |
+
+Force Join channels are added from `/settings`, no variable needed.
+
+</details>
+
+## 🤖 Commands
+
+<details>
+<summary><b>👉 Tap to open the command list</b></summary>
+
+<br>
+
+| Command | What it does |
+|---|---|
+| `/start` | Check that the bot is alive |
+| `/settings` | Control panel: Automatic Replies, Force Join, Statistics |
+| `/broadcast` | Send messages to all users: send any number of messages, then `/done`, check the preview and confirm. Reply to a message with it to skip ahead |
+| `/send` | `/send user_id`: send messages to one user only |
+| `/ban` `/unban` | Ban or unban users: `/ban id1 id2 id3`, reply to a forwarded message, or send a `.txt` file of ids |
+| `/banlist` | Download the ban list as a `.txt` file |
+| `/status` | Users, banned users, CPU, RAM and uptime |
+| `/info` | Who sent a message: reply to a forwarded message, or `/info user_id` |
+| `/restart` | Restart the bot |
+
+</details>
+
+## 💝 Credits
+
+<details>
+<summary><b>👉 Tap to see the credits</b></summary>
+
+<br>
+
+- 🧩 Based on an open-source contact bot released under the MIT License (see `LICENSE`)
+- ❤️ Customised and maintained for the **ChillFlizX** community
+
+</details>
+
+---
+
+<p align="center">© ChillFlizX. All rights reserved.</p>
