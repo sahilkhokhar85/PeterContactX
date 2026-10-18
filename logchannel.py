@@ -61,6 +61,12 @@ async def _post(client, text: str, message=None):
 
 # ---------------- what gets logged ----------------
 
+async def log_now(client, text: str):
+    """Same as log_text but waits until it is sent (used right before a restart)."""
+    if enabled():
+        await _post(client, text)
+
+
 def log_text(client, text: str):
     """A plain bold/HTML text entry (bans, broadcast result...)."""
     if enabled():
