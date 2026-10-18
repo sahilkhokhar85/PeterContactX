@@ -25,6 +25,7 @@ chat_history_col = db.chat_history
 content_col = db.content_index
 indexed_channels_col = db.indexed_channels
 msg_map_col = db.msg_map
+msg_links_col = db.msg_links
 
 
 def _now():
@@ -40,6 +41,8 @@ async def ensure_indexes():
         (msg_map_col, [("admin_id", 1), ("msg_id", 1)], {"unique": True}),
         (msg_map_col, [("at", 1)], {"expireAfterSeconds": MESSAGE_MAP_DAYS * 86400}),
         (join_requests_col, [("user_id", 1), ("chat_id", 1)], {"unique": True}),
+        (msg_links_col, [("chat_id", 1), ("msg_id", 1), ("peer_chat", 1)], {"unique": True}),
+        (msg_links_col, [("at", 1)], {"expireAfterSeconds": MESSAGE_MAP_DAYS * 86400}),
     ]
     for col, keys, kwargs in specs:
         try:
@@ -62,6 +65,26 @@ async def save_forward_map(admin_id: int, msg_id: int, user_id: int):
 async def get_forward_user(admin_id: int, msg_id: int):
     doc = await msg_map_col.find_one({"admin_id": admin_id, "msg_id": msg_id})
     return doc["user_id"] if doc else None
+
+
+# ---------------- Message links (edit + reaction sync) ----------------
+# Every message the bot relays is linked to its copy on the other side, in BOTH directions:
+#   kind "user":  the user wrote it  -> (user chat, msg) <-> (admin chat, forwarded msg)
+#   kind "admin": an admin wrote it  -> (admin chat, msg) <-> (user chat, copied msg)
+# so an edit or a reaction on either message can be passed to the other one.
+
+async def save_link(chat_a: int, msg_a: int, chat_b: int, msg_b: int, kind: str):
+    now = _now()
+    await msg_links_col.bulk_write([
+        UpdateOne({"chat_id": chat_a, "msg_id": msg_a, "peer_chat": chat_b},
+                  {"$set": {"peer_msg": msg_b, "kind": kind, "at": now}}, upsert=True),
+        UpdateOne({"chat_id": chat_b, "msg_id": msg_b, "peer_chat": chat_a},
+                  {"$set": {"peer_msg": msg_a, "kind": kind, "at": now}}, upsert=True),
+    ], ordered=False)
+
+async def get_links(chat_id: int, msg_id: int) -> list:
+    """[{peer_chat, peer_msg, kind}] for this message (empty when it was never relayed)."""
+    return [d async for d in msg_links_col.find({"chat_id": chat_id, "msg_id": msg_id})]
 
 
 # ---------------- Users ----------------
