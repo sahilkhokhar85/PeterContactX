@@ -13,10 +13,9 @@ from config import (
 )
 from database import (
     add_user, is_banned, get_admins, admin_filter, find_auto_reply,
-    get_chat_history, add_chat_turns, search_content,
+    search_content,
     save_forward_map, get_forward_user, save_link, get_links,
 )
-from ai import ask_gemini
 from logchannel import log_user_message, log_admin_reply
 from Plugins.forcesub import is_subscribed, send_force_sub_prompt
 
@@ -131,15 +130,6 @@ async def forward_to_admin(client: Client, message: Message):
                 return
             except Exception:
                 pass  # source post may be deleted/inaccessible — fall through below
-
-    # AI assistant reply — only for plain text, only when GEMINI_API_KEY is
-    # configured (see config.py). Admin still gets the forward above either way.
-    if message.text:
-        history = await get_chat_history(user_id)
-        ai_reply = await ask_gemini(history, message.text)
-        if ai_reply:
-            await add_chat_turns(user_id, message.text, ai_reply)
-            return await message.reply(ai_reply)
 
     sent_msg = await message.reply(
         "<b>✅ Message Sent!</b>",
