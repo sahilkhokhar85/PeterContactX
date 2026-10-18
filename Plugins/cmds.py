@@ -8,7 +8,7 @@ from pyrogram import Client, filters, enums
 from pyrogram.types import Message
 
 from database import admin_filter, add_user, is_banned, is_user_exist
-from logchannel import log_user_message
+from logchannel import log_user_message, log_now
 from Plugins.forcesub import is_subscribed, send_force_sub_prompt
 from texts import START_IMAGE, START_TEXT
 
@@ -45,7 +45,7 @@ async def start_cmd(client: Client, message: Message):
 
 @Client.on_message(filters.command("restart") & filters.private & admin_filter)
 async def restart_bot(client: Client, message: Message):
-    steve = await message.reply_text("<b>🔄 Restarting Bot...</b>", parse_mode=enums.ParseMode.HTML)
-    await asyncio.sleep(3)
-    await steve.edit("<b>✅ Bot Restarted Successfully</b>", parse_mode=enums.ParseMode.HTML)
+    await message.reply_text("<b>🔄 Restarting...</b>", parse_mode=enums.ParseMode.HTML)
+    await log_now(client, f"<b>🔄 Bot Restarting</b>\n\n<b>👮 By:</b> <code>{message.from_user.id}</code>")
+    await asyncio.sleep(2)
     os.execl(sys.executable, sys.executable, *sys.argv)
