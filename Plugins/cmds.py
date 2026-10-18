@@ -7,7 +7,8 @@ import logging
 from pyrogram import Client, filters, enums
 from pyrogram.types import Message
 
-from database import admin_filter, add_user, is_banned
+from database import admin_filter, add_user, is_banned, is_user_exist
+from logchannel import log_user_message
 from Plugins.forcesub import is_subscribed, send_force_sub_prompt
 from texts import START_IMAGE, START_TEXT
 
@@ -35,7 +36,10 @@ async def start_cmd(client: Client, message: Message):
     if not await is_subscribed(client, user_id):
         return await send_force_sub_prompt(client, message)
 
+    is_new = not await is_user_exist(user_id)
     await add_user(user_id, message.from_user.first_name or "", message.from_user.username or "")
+    if is_new:
+        log_user_message(client, message, "🆕 New User")
     await send_start_message(client, message.chat.id, message.from_user)
 
 
