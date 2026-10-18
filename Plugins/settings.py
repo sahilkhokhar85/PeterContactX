@@ -29,7 +29,7 @@ pending = {}
 
 MAIN_TEXT = (
     "<b>⚙️ Control Panel !!</b>\n\n"
-    "<b>Tap An Option Below To Get Started 👇</b>"
+    "<b>👇 Choose An Option Below !!</b>"
 )
 
 
