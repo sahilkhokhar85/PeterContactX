@@ -93,7 +93,7 @@ async def render_ar_menu():
     buttons.append([InlineKeyboardButton("⬅ Back", callback_data="menu")])
     text = (
         "<b>🔤 Automatic Replies !!\n\n"
-        "💬 Bot Replies When A User Types A Keyword\n\n"
+        "💬 Replies When A Keyword Is Typed\n\n"
         "👇 Tap A Keyword To Remove It.</b>"
     )
     return text, InlineKeyboardMarkup(buttons)
