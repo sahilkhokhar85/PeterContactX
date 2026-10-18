@@ -5,8 +5,8 @@ START_IMAGE = "https://files.catbox.moe/glbqmw.png"
 SETTINGS_IMAGE = "https://files.catbox.moe/yuwejo.jpg"
 
 START_TEXT = (
-    "<b>Hey {mention} !! ❤️\n\n"
-    "💌 Welcome To The Contact Bot! ✨\n\n"
+    "<b>Hey {mention} !! 💌\n\n"
+    "💫 Welcome To The Contact Bot! ❤️✨\n\n"
     "💬 Need Help, Have A Request, Query, Or Feedback? We're Here To Help.\n\n"
     "👇 Let's Talk, Message Me Below.\n\n"
     "⚡ I'll Reply As Soon As Possible 😎\n\n"
