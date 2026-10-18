@@ -17,6 +17,7 @@ from database import (
     save_forward_map, get_forward_user, save_link, get_links,
 )
 from ai import ask_gemini
+from logchannel import log_user_message, log_admin_reply
 from Plugins.forcesub import is_subscribed, send_force_sub_prompt
 
 SENT_CONFIRM_DELETE_AFTER = 3  # seconds before "Message sent!" auto-deletes
@@ -82,6 +83,7 @@ async def forward_to_admin(client: Client, message: Message):
         return await send_force_sub_prompt(client, message)
 
     await add_user(user_id, message.from_user.first_name or "", message.from_user.username or "")
+    log_user_message(client, message)   # log channel (no-op when LOG_CHANNEL is not set)
 
     # Automatic keyword reply — replaces forwarding when a keyword matches.
     if message.text:
@@ -99,7 +101,7 @@ async def forward_to_admin(client: Client, message: Message):
             # kept in Mongo (not RAM) so the admin can still reply after a restart,
             # even if the user hides their identity on forwarded messages
             await save_forward_map(admin_id, fwd.id, user_id)
-            await save_link(user_id, message.id, admin_id, fwd.id, "user")   # for edit / reaction sync
+            await save_link(user_id, message.id, admin_id, fwd.id, "user")   # for edit sync
             sent_to_any = True
         except Exception:
             continue
@@ -172,7 +174,8 @@ async def reply_to_user(client: Client, message: Message):
         return await message.reply("<b>❌ User ID Not Detected. Reply To A Message The Bot Forwarded To You.</b>", parse_mode=enums.ParseMode.HTML)
     try:
         copied = await message.copy(user_id)
-        await save_link(message.chat.id, message.id, user_id, copied.id, "admin")   # for edit / reaction sync
+        await save_link(message.chat.id, message.id, user_id, copied.id, "admin")   # for edit sync
+        log_admin_reply(client, message, user_id)
     except UserIsBlocked:
         await message.reply("<b>🚫 This User Has Blocked The Bot.</b>", parse_mode=enums.ParseMode.HTML)
     except InputUserDeactivated:
@@ -192,6 +195,7 @@ async def admin_edited(client: Client, message: Message):
     for link in await get_links(message.chat.id, message.id):
         if link.get("kind") != "admin":
             continue
+        log_admin_reply(client, message, link["peer_chat"], "✏️ Reply Edited")
         try:
             if message.text:
                 await client.edit_message_text(link["peer_chat"], link["peer_msg"], message.text.html, parse_mode=enums.ParseMode.HTML)
@@ -217,6 +221,7 @@ async def user_edited(client: Client, message: Message):
     user_id = message.from_user.id
     if await is_banned(user_id):
         return
+    log_user_message(client, message, "✏️ Edited Message")
     links = [l for l in await get_links(user_id, message.id) if l.get("kind") == "user"]
     if not links:
         return
@@ -227,42 +232,11 @@ async def user_edited(client: Client, message: Message):
         admin_id = link["peer_chat"]
         try:
             await client.send_message(
-                admin_id, "<b>✏️ Edited Message — The Updated Version Of This Message Is Below 👇</b>",
+                admin_id, "<b>✏️ Edited Message !! 👇</b>",
                 parse_mode=enums.ParseMode.HTML, reply_to_message_id=link["peer_msg"],
             )
             fwd = await message.forward(admin_id)
             await save_forward_map(admin_id, fwd.id, user_id)
-            await save_link(user_id, message.id, admin_id, fwd.id, "user")   # reactions work on the newest copy too
+            await save_link(user_id, message.id, admin_id, fwd.id, "user")   # keeps the newest copy linked for further edits
         except Exception:
             continue
-
-
-# ---------------- Reactions ----------------
-# A reaction on a forwarded message goes to the user's original message, a reaction on a
-# message you sent goes to the user's copy, and the other way round for the user.
-# Needs a kurigram version that has on_message_reaction_updated; without it this is skipped.
-
-_on_reaction = getattr(Client, "on_message_reaction_updated", None)
-
-
-async def _mirror_reaction(client: Client, update):
-    chat = getattr(update, "chat", None)
-    actor = getattr(update, "user", None)
-    if not chat or chat.id <= 0 or (actor and getattr(actor, "is_self", False)):
-        return
-    emojis = [r.emoji for r in (update.new_reaction or []) if getattr(r, "emoji", None)]
-    for link in await get_links(chat.id, update.message_id):
-        try:
-            await client.send_reaction(link["peer_chat"], link["peer_msg"], emojis or None)
-        except Exception:
-            if len(emojis) > 1:
-                try:
-                    await client.send_reaction(link["peer_chat"], link["peer_msg"], emojis[0])
-                except Exception:
-                    pass
-
-
-if _on_reaction:
-    @_on_reaction()
-    async def reaction_updated(client: Client, update):
-        await _mirror_reaction(client, update)
