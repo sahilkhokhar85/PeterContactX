@@ -14,6 +14,11 @@ if not OWNERS:
     raise ValueError("ADMIN variable is missing or invalid (set your numeric Telegram id)")
 ADMIN = OWNERS[0]
 
+# Optional log channel: id of a private channel where the bot records every message,
+# edit, reply, ban and broadcast (with name / id / username). The bot must be an admin there.
+_raw_log = os.environ.get("LOG_CHANNEL", "").strip()
+LOG_CHANNEL = int(_raw_log) if re.fullmatch(r"-?\d+", _raw_log) else (_raw_log or 0)
+
 DATABASE_URI = os.environ.get("DATABASE_URI", "")
 DATABASE_NAME = os.environ.get("DATABASE_NAME", "MRNContactBot")
 
