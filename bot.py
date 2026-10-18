@@ -2,7 +2,7 @@ import os
 import html
 from pyrogram import Client, enums
 from aiohttp import web
-from config import API_ID, API_HASH, BOT_TOKEN, ADMIN
+from config import API_ID, API_HASH, BOT_TOKEN, ADMIN, LOG_CHANNEL
 from database import ensure_indexes
 
 routes = web.RouteTableDef()
@@ -40,6 +40,13 @@ class Bot(Client):
         await super().start(*args, **kwargs)
 
         await ensure_indexes()   # message-map TTL, ban list, join requests (safe to run on every start)
+
+        if LOG_CHANNEL:
+            try:   # also lets the bot resolve the channel before the first log entry
+                chat = await self.get_chat(LOG_CHANNEL)
+                print(f"Log channel: {chat.title}")
+            except Exception as e:
+                print(f"Log channel error ({type(e).__name__}): make the bot an admin of LOG_CHANNEL. {e}")
 
         me = await self.get_me()
         print(f"Bot Started as {me.first_name}")
