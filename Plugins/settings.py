@@ -29,7 +29,7 @@ pending = {}
 
 MAIN_TEXT = (
     "<b>⚙️ Control Panel !!</b>\n\n"
-    "<b>Manage Your Contact Bot From Here 👇</b>"
+    "<b>Tap An Option Below To Get Started 👇</b>"
 )
 
 
@@ -56,8 +56,8 @@ def cancel_btn():
 
 def main_menu_markup():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔤 Automatic Replies", callback_data="ar_menu")],
-        [InlineKeyboardButton("🔑 Force Join", callback_data="fj_menu")],
+        [InlineKeyboardButton("🔤 Automatic Replies", callback_data="ar_menu"),
+         InlineKeyboardButton("🔑 Force Join", callback_data="fj_menu")],
         [InlineKeyboardButton("📊 Statistics", callback_data="stats")]
     ])
 
