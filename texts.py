@@ -9,6 +9,6 @@ START_TEXT = (
     "💫 Welcome To The Contact Bot! ❤️✨\n\n"
     "💬 Need Help, Have A Request, Query, Or Feedback? We're Here To Help.\n\n"
     "👇 Let's Talk, Message Me Below.\n\n"
-    "⚡ I'll Reply As Soon As Possible 😎\n\n"
+    "⚡ I'll Reply As Soon As Possible. 😎\n\n"
     "👨‍💻 Powered By @ChillFlizX !!</b>"
 )
