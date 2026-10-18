@@ -20,21 +20,23 @@
 - [x] Silent Ban Guard, Bulk `/ban` `/unban` (ids, `.txt` file, or reply), `/banlist` Export
 - [x] `/status` And `/info`
 - [x] Every Bot Message Is Bold
+- [x] Log Channel: records every message with name / id / username, even for users who hide their profile
+- [x] Edited Messages Are Synced Both Ways
 - [x] 24x7 Uptime With Built-In Web Server
 
 ## Commands
 
 ```
-start - check I'm alive
-settings - open the control panel (admin)
-broadcast - send any messages to all users, with preview (admin)
-send - send messages to ONE user: /send user_id (admin)
-ban - ban users: ids, reply to a forwarded message, or .txt file (admin)
-unban - unban users (admin)
-banlist - download the ban list as a file (admin)
-status - users, banned, CPU, RAM, uptime (admin)
-info - who sent this message / who is this id (admin)
-restart - restart bot (admin only)
+start - Start the bot
+settings - Control panel
+broadcast - Send to all users
+send - Send to one user
+ban - Ban users
+unban - Unban users
+banlist - Download ban list
+status - Bot status
+info - User info
+restart - Restart bot
 ```
 
 `/settings` has three buttons: **Automatic Replies**, **Force Join** and **Statistics**.
@@ -63,6 +65,7 @@ Admins stored in the database keep their permissions (**Settings panel**, **Broa
 * `ADMIN` Telegram Account Id of Owner (several owners: separate with a space, e.g. `123456 789012`)
 * `DATABASE_URI` MongoDB connection string (required — used for users, admins, bans, settings)
 * `DATABASE_NAME` MongoDB database name (optional, defaults to `MRNContactBot`)
+* `LOG_CHANNEL` Private channel id (e.g. `-1001234567890`) where every message, edit, reply, ban and broadcast is recorded with the user's name / id / username. The bot must be an admin there. Optional.
 
 Optional tuning (all have sensible defaults):
 
