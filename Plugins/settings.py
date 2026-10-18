@@ -11,6 +11,7 @@ from pyrogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 )
 
+from texts import SETTINGS_IMAGE
 from database import (
     admin_filter, admin_perm, admins_count, banned_users_count, total_users_count,
     get_auto_replies, add_auto_reply, remove_auto_reply,
@@ -27,9 +28,17 @@ settings_filter = admin_perm("can_settings")
 pending = {}
 
 MAIN_TEXT = (
-    "<b>⚙️ Control Panel</b>\n"
+    "<b>⚙️ Control Panel !!</b>\n\n"
     "<b>Manage Your Contact Bot From Here 👇</b>"
 )
+
+
+async def edit(query: CallbackQuery, text: str, reply_markup=None, parse_mode=HTML):
+    """Edit the panel message: the main panel is a photo (edit its caption), other messages are plain text."""
+    msg = query.message
+    if msg.photo:
+        return await msg.edit_caption(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    return await msg.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 
 async def send_plain(client: Client, message: Message, text: str, **kwargs):
@@ -55,18 +64,22 @@ def main_menu_markup():
 @Client.on_message(filters.command(["settings", "menu"]) & filters.private & settings_filter)
 async def settings_cmd(client: Client, message: Message):
     pending.pop(message.from_user.id, None)
-    await send_plain(client, message, MAIN_TEXT, reply_markup=main_menu_markup())
+    try:
+        await client.send_photo(message.chat.id, SETTINGS_IMAGE, caption=MAIN_TEXT,
+                                reply_markup=main_menu_markup(), parse_mode=HTML)
+    except Exception:
+        await send_plain(client, message, MAIN_TEXT, reply_markup=main_menu_markup())
 
 @Client.on_callback_query(filters.regex("^menu$") & settings_filter)
 async def menu_cb(client: Client, query: CallbackQuery):
     pending.pop(query.from_user.id, None)
-    await query.message.edit_text(MAIN_TEXT, reply_markup=main_menu_markup(), parse_mode=HTML)
+    await edit(query, MAIN_TEXT, reply_markup=main_menu_markup(), parse_mode=HTML)
 
 @Client.on_callback_query(filters.regex("^cancel$") & settings_filter)
 async def cancel_cb(client: Client, query: CallbackQuery):
     pending.pop(query.from_user.id, None)
     await query.answer("Cancelled.")
-    await query.message.edit_text(MAIN_TEXT, reply_markup=main_menu_markup(), parse_mode=HTML)
+    await edit(query, MAIN_TEXT, reply_markup=main_menu_markup(), parse_mode=HTML)
 
 
 # ============================================================
@@ -88,12 +101,12 @@ async def render_ar_menu():
 @Client.on_callback_query(filters.regex("^ar_menu$") & settings_filter)
 async def ar_menu_cb(client: Client, query: CallbackQuery):
     text, markup = await render_ar_menu()
-    await query.message.edit_text(text, reply_markup=markup, parse_mode=HTML)
+    await edit(query, text, reply_markup=markup, parse_mode=HTML)
 
 @Client.on_callback_query(filters.regex("^ar_add$") & settings_filter)
 async def ar_add_cb(client: Client, query: CallbackQuery):
     pending[query.from_user.id] = {"action": "ar_add_keyword", "temp": {}}
-    await query.message.edit_text("<b>Send Me The Keyword:</b>", reply_markup=cancel_btn(), parse_mode=HTML)
+    await edit(query, "<b>Send Me The Keyword:</b>", reply_markup=cancel_btn(), parse_mode=HTML)
 
 @Client.on_callback_query(filters.regex(r"^ar_del:") & settings_filter)
 async def ar_del_cb(client: Client, query: CallbackQuery):
@@ -101,7 +114,7 @@ async def ar_del_cb(client: Client, query: CallbackQuery):
     await remove_auto_reply(keyword)
     await query.answer("Removed.")
     text, markup = await render_ar_menu()
-    await query.message.edit_text(text, reply_markup=markup, parse_mode=HTML)
+    await edit(query, text, reply_markup=markup, parse_mode=HTML)
 
 
 # ============================================================
@@ -127,12 +140,12 @@ async def render_fj_menu():
 @Client.on_callback_query(filters.regex("^fj_menu$") & settings_filter)
 async def fj_menu_cb(client: Client, query: CallbackQuery):
     text, markup = await render_fj_menu()
-    await query.message.edit_text(text, reply_markup=markup, parse_mode=HTML)
+    await edit(query, text, reply_markup=markup, parse_mode=HTML)
 
 @Client.on_callback_query(filters.regex("^fj_add$") & settings_filter)
 async def fj_add_cb(client: Client, query: CallbackQuery):
     pending[query.from_user.id] = {"action": "fj_add", "temp": {}}
-    await query.message.edit_text(
+    await edit(query, 
         "<b>Send The Channel Username (e.g.</b> <code>@mychannel</code><b>) Or ID.\n"
         "Make Sure The Bot Is An Admin In That Channel.</b>",
         reply_markup=cancel_btn(), parse_mode=HTML
@@ -153,7 +166,7 @@ async def fj_mode_cb(client: Client, query: CallbackQuery):
             invite = await client.create_chat_invite_link(temp["chat_id"], creates_join_request=True, name="Contact bot force join")
             link = invite.invite_link
         except Exception as e:
-            return await query.message.edit_text(
+            return await edit(query, 
                 f"<b>❌ Couldn't Create A Join-Request Link:</b>\n<code>{html.escape(str(e))}</code>\n\n"
                 "<b>Make The Bot An Admin Of That Channel With The \"Invite Users\" Right, Then Add It Again.</b>",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", callback_data="fj_menu")]]),
@@ -165,7 +178,7 @@ async def fj_mode_cb(client: Client, query: CallbackQuery):
     await query.answer("Added.")
     text, markup = await render_fj_menu()
     title = html.escape(temp["title"] or "chat")
-    await query.message.edit_text(
+    await edit(query, 
         f"<b>✅ Added</b> <code>{html.escape(temp['chat'])}</code> <b>({title}) In "
         f"{'Join Request' if mode == 'request' else 'Normal'} Mode.</b>\n\n{text}",
         reply_markup=markup, parse_mode=HTML
@@ -177,7 +190,7 @@ async def fj_del_cb(client: Client, query: CallbackQuery):
     await remove_force_channel(chat)
     await query.answer("Removed.")
     text, markup = await render_fj_menu()
-    await query.message.edit_text(text, reply_markup=markup, parse_mode=HTML)
+    await edit(query, text, reply_markup=markup, parse_mode=HTML)
 
 
 # ============================================================
@@ -189,7 +202,7 @@ async def stats_cb(client: Client, query: CallbackQuery):
     total = await total_users_count()
     banned = await banned_users_count()
     admins = await admins_count()
-    await query.message.edit_text(
+    await edit(query, 
         "<b>📊 Statistics</b>\n\n"
         f"<b>• Total Users:</b> <code>{total}</code>\n"
         f"<b>• Banned Users:</b> <code>{banned}</code>\n"
