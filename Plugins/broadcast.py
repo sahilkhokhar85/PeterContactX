@@ -10,6 +10,7 @@
 /send <user_id> works exactly the same way, but the messages go ONLY to that one user.
 """
 import asyncio
+import html
 import secrets
 import time
 
@@ -19,7 +20,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import BROADCAST_CONCURRENCY
 from logchannel import log_text
-from database import admin_perm, get_broadcast_targets, delete_user, is_banned
+from database import admin_perm, get_broadcast_targets, delete_user, is_banned, get_user
 
 # How many users we message at once. Telegram's flood limits are mostly per chat,
 # so sending to many *different* users concurrently is safe and much faster.
@@ -121,6 +122,26 @@ def _clean_old_jobs():
         _JOBS.pop(token, None)
 
 
+async def _user_label(bot, uid):
+    """'Name (id)' for the /send messages. The name comes from the saved users, else from Telegram;
+    if neither knows it, only the id is shown."""
+    name = ""
+    try:
+        doc = await get_user(int(uid))
+        name = str((doc or {}).get("first_name") or "").strip()
+    except Exception:
+        pass
+    if not name:
+        try:
+            u = await bot.get_users(int(uid))
+            name = " ".join(x for x in (u.first_name, u.last_name) if x).strip()
+        except Exception:
+            pass
+    if name:
+        return f"<b>{html.escape(name)} (</b><code>{uid}</code><b>)</b>"
+    return f"<code>{uid}</code>"
+
+
 def _users(n):
     return "User" if n == 1 else "Users"
 
@@ -194,7 +215,7 @@ async def _make_preview(bot, admin_id, chat_id, units, target=None):
         text = (
             "<b>👆 SEND PREVIEW !!</b>\n\n"
             f"<b>📦 Content: {what}</b>\n\n"
-            f"<b>👤 Send To:</b> <code>{target}</code>\n\n"
+            f"<b>👤 User:</b> {await _user_label(bot, target)} <b>only</b>\n\n"
             "<b>⚠️ Check Once — Sending can't be undone.</b>"
         )
         buttons = [InlineKeyboardButton("✅ Confirm Send", callback_data=f"bc_yes:{token}")]
@@ -256,10 +277,15 @@ async def send_cmd(bot, message):
 
     arg = message.command[1] if len(message.command) > 1 else ""
     if not (arg.isdigit() and 5 <= len(arg) <= 16):
-        return await message.reply_text("<b>Usage:</b> <code>/send user_id</code>")
+        return await message.reply_text(
+            "<b>📨 Usage:</b> <code>/send user_id</code>\n"
+            "<b>Or Reply To A Message With It.</b>"
+        )
     target = int(arg)
     if await is_banned(target):
-        return await message.reply_text("<b>🚫 This User Is Banned.</b>")
+        return await message.reply_text(
+            "<b>🚫 This User Is Banned.\n/unban First To Message Them.</b>"
+        )
 
     if message.reply_to_message:
         msgs = await _messages_from_reply(bot, message.reply_to_message)
@@ -267,8 +293,8 @@ async def send_cmd(bot, message):
 
     _WAITING[admin_id] = {"t": time.time(), "msgs": [], "ack": None, "target": target}
     await message.reply_text(
-        f"<b>📨 Send Your Messages For</b> <code>{target}</code>\n\n"
-        "<b>/done - Preview\n"
+        f"<b>📨 Send Your Messages To</b> {await _user_label(bot, target)}<b>.\n\n"
+        "/done - Preview\n"
         "/cancel - Stop</b>"
     )
 
@@ -369,7 +395,7 @@ async def broadcast_answer(bot, query):
 
 async def _run_direct(bot, sts, user_id, units):
     """Send to one user and tell the admin exactly what happened."""
-    await sts.edit_text("<b>📨 SENDING…</b>")
+    await sts.edit_text("<b>Sending...</b>")
     sent = 0
     reason = None
     try:
@@ -377,18 +403,21 @@ async def _run_direct(bot, sts, user_id, units):
             await _deliver_with_retry(bot, user_id, unit)
             sent += 1
     except UserIsBlocked:
-        reason = "User Blocked The Bot."
+        reason = "That User Has Blocked The Bot."
     except InputUserDeactivated:
-        reason = "Account Is Deleted."
+        reason = "That Account Is Deleted."
     except PeerIdInvalid:
-        reason = "User Not Found. Check The ID."
+        reason = "The Bot Can't Find This User. Check The ID. The User Must Have Started The Bot."
     except Exception as e:
         reason = f"Failed ({type(e).__name__})."
 
     if reason is None:
-        text = f"<b>✅ SENT !!</b>\n\n<b>👤 User:</b> <code>{user_id}</code>"
+        text = f"<b>✅ Sent To User</b> <code>{user_id}</code><b>. ({sent} Message(s))</b>"
     else:
-        text = f"<b>❌ NOT SENT !!</b>\n\n<b>👤 User:</b> <code>{user_id}</code>\n<b>{reason}</b>"
+        text = (
+            f"<b>❌ Not Sent To User</b> <code>{user_id}</code>\n<b>{reason}</b>\n"
+            f"<b>Delivered Before The Error: {sent} Of {len(units)}</b>"
+        )
     await sts.edit_text(text)
     log_text(bot, text)
 
