@@ -1,8 +1,9 @@
 import os
 import html
-from pyrogram import Client, enums
+from pyrogram import Client
 from aiohttp import web
-from config import API_ID, API_HASH, BOT_TOKEN, ADMIN, LOG_CHANNEL
+from config import API_ID, API_HASH, BOT_TOKEN, LOG_CHANNEL
+from logchannel import log_now
 from database import ensure_indexes
 
 routes = web.RouteTableDef()
@@ -51,11 +52,8 @@ class Bot(Client):
         me = await self.get_me()
         print(f"Bot Started as {me.first_name}")
         
-        if ADMIN:
-            try:
-                await self.send_message(ADMIN, f"<b>🤖 {html.escape(me.first_name)} Contact Bot Is Started...</b>", parse_mode=enums.ParseMode.HTML)
-            except Exception as e:
-                print(f"Error sending message to admin: {e}")
+        # start notice goes to the log channel only (nothing is sent to the owner's chat with the bot)
+        await log_now(self, f"<b>🤖 {html.escape(me.first_name)} Started !!</b>")
 
     async def stop(self, *args):
         await super().stop()
