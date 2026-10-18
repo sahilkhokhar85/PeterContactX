@@ -20,6 +20,7 @@ from database import (
     total_users_count, get_admins, get_user, is_banned, is_admin,
 )
 from Plugins.contact import resolve_reply_target
+from logchannel import log_text
 
 try:
     import psutil
@@ -66,6 +67,16 @@ def ids_from_file_text(text: str) -> set:
     return ids
 
 
+def _ids_log(title: str, admin_id: int, ids: set) -> str:
+    shown = sorted(ids)[:20]
+    more = f"\n<b>+ {len(ids) - len(shown)} More</b>" if len(ids) > len(shown) else ""
+    return (
+        f"<b>{title}</b>\n\n"
+        + "\n".join(f"<code>{i}</code>" for i in shown) + more
+        + f"\n\n<b>👮 By:</b> <code>{admin_id}</code>"
+    )
+
+
 async def _collect_target_ids(client, message: Message) -> set:
     ids = set()
     text = message.text or message.caption or ""
@@ -105,6 +116,8 @@ async def ban_cmd(client: Client, message: Message):
     skipped = ids & protected
     ids -= protected
     new = await ban_users(ids) if ids else 0
+    if ids:
+        log_text(client, _ids_log("🚫 BANNED", message.from_user.id, ids))
     text = (
         f"<b>✅ Banned {new} New Id(s).</b>\n"
         f"<b>Already Banned:</b> <code>{len(ids) - new}</code>\n"
@@ -126,6 +139,7 @@ async def unban_cmd(client: Client, message: Message):
             "<b>Or Reply To A Forwarded Message / A .txt File Of Ids With /unban</b>"
         )
     removed = await unban_users(ids)
+    log_text(client, _ids_log("✅ UNBANNED", message.from_user.id, ids))
     await message.reply_text(
         f"<b>✅ Unbanned {removed} Id(s).</b>\n"
         f"<b>Not In The Ban List:</b> <code>{len(ids) - removed}</code>\n"
