@@ -27,10 +27,14 @@ settings_filter = admin_perm("can_settings")
 pending = {}
 
 MAIN_TEXT = (
-    "<b>⚙️ Control Panel\n\n"
-    "Manage Your Contact Bot From Here.\n"
-    "Choose An Option Below 👇</b>"
+    "<b>⚙️ Control Panel</b>\n"
+    "<b>Manage Your Contact Bot From Here 👇</b>"
 )
+
+
+async def send_plain(client: Client, message: Message, text: str, **kwargs):
+    """Send a normal message (no reply-quote of the admin's own message)."""
+    return await client.send_message(message.chat.id, text, parse_mode=HTML, **kwargs)
 
 
 def cancel_btn():
@@ -43,15 +47,15 @@ def cancel_btn():
 
 def main_menu_markup():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔤 Automatic Replies", callback_data="ar_menu"),
-         InlineKeyboardButton("🔑 Force Join", callback_data="fj_menu")],
+        [InlineKeyboardButton("🔤 Automatic Replies", callback_data="ar_menu")],
+        [InlineKeyboardButton("🔑 Force Join", callback_data="fj_menu")],
         [InlineKeyboardButton("📊 Statistics", callback_data="stats")]
     ])
 
 @Client.on_message(filters.command(["settings", "menu"]) & filters.private & settings_filter)
 async def settings_cmd(client: Client, message: Message):
     pending.pop(message.from_user.id, None)
-    await message.reply(MAIN_TEXT, reply_markup=main_menu_markup(), parse_mode=HTML)
+    await send_plain(client, message, MAIN_TEXT, reply_markup=main_menu_markup())
 
 @Client.on_callback_query(filters.regex("^menu$") & settings_filter)
 async def menu_cb(client: Client, query: CallbackQuery):
@@ -219,17 +223,14 @@ async def pending_input_handler(client: Client, message: Message):
     if action == "ar_add_keyword":
         temp["keyword"] = message.text.strip()
         pending[admin_id] = {"action": "ar_add_reply", "temp": temp}
-        await message.reply("<b>Now Send The Reply Text For This Keyword:</b>", reply_markup=cancel_btn(), parse_mode=HTML)
+        await send_plain(client, message, "<b>Now Send The Reply Text For This Keyword:</b>", reply_markup=cancel_btn())
 
     elif action == "ar_add_reply":
         await add_auto_reply(temp["keyword"], message.text.html)
         pending.pop(admin_id, None)
         text, markup = await render_ar_menu()
-        await message.reply(
-            f"<b>✅ Auto-Reply Added For Keyword</b> <code>{html.escape(temp['keyword'])}</code><b>.</b>",
-            parse_mode=HTML
-        )
-        await message.reply(text, reply_markup=markup, parse_mode=HTML)
+        await send_plain(client, message, f"<b>✅ Auto-Reply Added For Keyword</b> <code>{html.escape(temp['keyword'])}</code><b>.</b>")
+        await send_plain(client, message, text, reply_markup=markup)
 
     # ---------- Force join ----------
     elif action == "fj_add":
@@ -238,13 +239,15 @@ async def pending_input_handler(client: Client, message: Message):
         try:
             info = await client.get_chat(target)
         except Exception as e:
-            return await message.reply(
+            return await send_plain(
+                client, message,
                 f"<b>❌ Couldn't Find That Chat:</b>\n<code>{html.escape(str(e))}</code>\n\n"
                 "<b>Check The @username / ID And Make Sure The Bot Is An Admin There. Send It Again Or Cancel.</b>",
-                reply_markup=cancel_btn(), parse_mode=HTML
+                reply_markup=cancel_btn()
             )
         pending[admin_id] = {"action": "fj_mode", "temp": {"chat": chat, "chat_id": info.id, "title": info.title}}
-        await message.reply(
+        await send_plain(
+            client, message,
             f"<b>{html.escape(info.title or chat)} Found.\n\nHow Should Users Join It?\n"
             "📢 Normal: They Must Be A Member.\n"
             "📨 Join Request: For Channels With \"Approve New Members\"; Sending The Request Is Enough, No Approval Needed.</b>",
@@ -252,14 +255,14 @@ async def pending_input_handler(client: Client, message: Message):
                 [InlineKeyboardButton("📢 Normal", callback_data="fj_mode:normal"),
                  InlineKeyboardButton("📨 Join Request", callback_data="fj_mode:request")],
                 [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
-            ]),
-            parse_mode=HTML
+            ])
         )
 
     elif action == "fj_mode":
-        return await message.reply(
+        return await send_plain(
+            client, message,
             "<b>Please Choose How Users Join Using The Buttons Above, Or Cancel.</b>",
-            reply_markup=cancel_btn(), parse_mode=HTML
+            reply_markup=cancel_btn()
         )
 
     raise StopPropagation
