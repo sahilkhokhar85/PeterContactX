@@ -2,6 +2,7 @@
 # The whole message is bold (HTML). {mention} is replaced with a clickable name of the user.
 
 START_IMAGE = "https://files.catbox.moe/glbqmw.png"
+SETTINGS_IMAGE = "https://files.catbox.moe/yuwejo.jpg"
 
 START_TEXT = (
     "<b>Hey {mention} !! 💌\n\n"
