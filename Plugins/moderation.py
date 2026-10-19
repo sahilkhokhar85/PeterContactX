@@ -100,17 +100,18 @@ async def _collect_target_ids(client, message: Message) -> set:
     return ids
 
 
+def _users(n: int) -> str:
+    return f"{n} User" + ("" if n == 1 else "s")
+
+
 @Client.on_message(filters.command("ban") & filters.private & admin_perm("can_settings"))
 async def ban_cmd(client: Client, message: Message):
     ids = await _collect_target_ids(client, message)
     if not ids:
         return await message.reply_text(
-            "<b>Usage:</b>\n"
+            "<b>🚫 Usage:</b>\n"
             "<code>/ban user_id</code>\n"
-            "<code>/ban id1 id2 id3 ...</code> <b>(Many Ids At Once)</b>\n"
-            "<b>Send Or Reply With A .txt File Of Ids Using /ban\n"
-            "Or Reply To A Message The Bot Forwarded To You With /ban\n\n"
-            "Ids Don't Need To Have Used The Bot. They Are Blocked Forever And Get No Reply.</b>"
+            "<code>/ban id1 id2 id3</code>"
         )
     protected = set(OWNERS) | set(await get_admins())
     skipped = ids & protected
@@ -118,13 +119,12 @@ async def ban_cmd(client: Client, message: Message):
     new = await ban_users(ids) if ids else 0
     if ids:
         log_text(client, _ids_log("🚫 BANNED", message.from_user, ids))
-    text = (
-        f"<b>✅ Banned {new} New Id(s).</b>\n"
-        f"<b>Already Banned:</b> <code>{len(ids) - new}</code>\n"
-    )
+    text = f"<b>🚫 {_users(new)} Banned !!</b>"
+    if ids and len(ids) - new:
+        text += f"\n\n<b>📋 Already Banned -</b> <code>{len(ids) - new}</code>"
     if skipped:
-        text += f"<b>Skipped Admins:</b> <code>{len(skipped)}</code>\n"
-    text += f"<b>Total Banned Now:</b> <code>{await banned_users_count()}</code>"
+        text += f"\n\n<b>⚠️ Admin Can't Be Banned -</b> <code>{len(skipped)}</code>"
+    text += f"\n\n<b>👥 Total Banned -</b> <code>{await banned_users_count()}</code>"
     await message.reply_text(text)
 
 
@@ -133,18 +133,17 @@ async def unban_cmd(client: Client, message: Message):
     ids = await _collect_target_ids(client, message)
     if not ids:
         return await message.reply_text(
-            "<b>Usage:</b>\n"
+            "<b>✅ Usage:</b>\n"
             "<code>/unban user_id</code>\n"
-            "<code>/unban id1 id2 id3 ...</code>\n"
-            "<b>Or Reply To A Forwarded Message / A .txt File Of Ids With /unban</b>"
+            "<code>/unban id1 id2 id3</code>"
         )
     removed = await unban_users(ids)
     log_text(client, _ids_log("✅ UNBANNED", message.from_user, ids))
-    await message.reply_text(
-        f"<b>✅ Unbanned {removed} Id(s).</b>\n"
-        f"<b>Not In The Ban List:</b> <code>{len(ids) - removed}</code>\n"
-        f"<b>Total Banned Now:</b> <code>{await banned_users_count()}</code>"
-    )
+    text = f"<b>✅ {_users(removed)} Unbanned !!</b>"
+    if len(ids) - removed:
+        text += f"\n\n<b>📋 Not Banned -</b> <code>{len(ids) - removed}</code>"
+    text += f"\n\n<b>👥 Total Banned -</b> <code>{await banned_users_count()}</code>"
+    await message.reply_text(text)
 
 
 @Client.on_message(filters.command("banlist") & filters.private & admin_perm("can_settings"))
