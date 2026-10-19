@@ -16,7 +16,7 @@ from database import (
     search_content,
     save_forward_map, get_forward_user, save_link, get_links,
 )
-from logchannel import log_user_message, log_admin_reply
+from logchannel import log_user_message, log_admin_reply, log_event, once_per, clip
 from Plugins.forcesub import is_subscribed, send_force_sub_prompt
 
 SENT_CONFIRM_DELETE_AFTER = 3  # seconds before "Message sent!" auto-deletes
@@ -74,11 +74,14 @@ async def forward_to_admin(client: Client, message: Message):
 
     allowed, notice = check_rate_limit(user_id, message.media_group_id)
     if not allowed:
+        if once_per(("rate", user_id), 300):
+            log_event(client, "⏳ Rate Limited (Too Fast)", user=message.from_user, message=message)
         if notice:
             await message.reply("<b>⏳ You Are Sending Messages Too Fast. Please Slow Down.</b>", parse_mode=enums.ParseMode.HTML)
         return
 
     if not await is_subscribed(client, user_id):
+        log_event(client, "📢 Force Join Pending (Message Not Delivered)", user=message.from_user, message=message)
         return await send_force_sub_prompt(client, message)
 
     await add_user(user_id, message.from_user.first_name or "", message.from_user.username or "")
@@ -88,6 +91,8 @@ async def forward_to_admin(client: Client, message: Message):
     if message.text:
         auto_reply = await find_auto_reply(message.text)
         if auto_reply:
+            log_event(client, "🤖 Auto Reply Sent", user=message.from_user,
+                      lines=[f"<b>💬 Reply:</b> {clip(auto_reply)}"])
             return await message.reply(auto_reply, parse_mode=enums.ParseMode.HTML)
 
     admin_ids = set(await get_admins())
@@ -106,6 +111,7 @@ async def forward_to_admin(client: Client, message: Message):
             continue
 
     if not sent_to_any:
+        log_event(client, "❌ Message Could Not Be Forwarded To Any Admin", user=message.from_user)
         return await message.reply("<b>❌ Error: Message Could Not Be Sent.</b>", parse_mode=enums.ParseMode.HTML)
 
     # Indexed content match — if the user's text matches something scanned
@@ -127,6 +133,8 @@ async def forward_to_admin(client: Client, message: Message):
                     )
                 else:
                     await message.reply(reply_text)
+                log_event(client, "🗂 Indexed Post Sent To User", user=message.from_user,
+                          lines=[f"<b>📄 Post:</b> {clip(reply_text)}"])
                 return
             except Exception:
                 pass  # source post may be deleted/inaccessible — fall through below
@@ -161,16 +169,21 @@ async def resolve_reply_target(admin_id: int, replied_msg: Message):
 async def reply_to_user(client: Client, message: Message):
     user_id = await resolve_reply_target(message.chat.id, message.reply_to_message)
     if not user_id:
+        log_event(client, "❌ Reply Not Delivered (User Not Detected)", by=message.from_user, message=message)
         return await message.reply("<b>❌ User ID Not Detected. Reply To A Message The Bot Forwarded To You.</b>", parse_mode=enums.ParseMode.HTML)
     try:
         copied = await message.copy(user_id)
         await save_link(message.chat.id, message.id, user_id, copied.id, "admin")   # for edit sync
         log_admin_reply(client, message, user_id)
     except UserIsBlocked:
+        log_event(client, "🚫 Reply Failed (User Blocked The Bot)", uid=user_id, by=message.from_user, message=message)
         await message.reply("<b>🚫 This User Has Blocked The Bot.</b>", parse_mode=enums.ParseMode.HTML)
     except InputUserDeactivated:
+        log_event(client, "🚫 Reply Failed (Account Deleted)", uid=user_id, by=message.from_user, message=message)
         await message.reply("<b>🚫 This User's Account Is Deleted.</b>", parse_mode=enums.ParseMode.HTML)
     except Exception as e:
+        log_event(client, "⚠️ Reply Failed", uid=user_id, by=message.from_user,
+                  lines=[f"<b>Error:</b> <code>{html.escape(str(e))}</code>"], message=message)
         await message.reply(
             f"<b>⚠️ Error Sending To User:</b>\n<code>{html.escape(str(e))}</code>",
             parse_mode=enums.ParseMode.HTML
@@ -196,6 +209,8 @@ async def admin_edited(client: Client, message: Message):
         except Exception as e:
             if "MESSAGE_NOT_MODIFIED" in str(e).upper():
                 continue
+            log_event(client, "⚠️ Reply Edit Failed", uid=link["peer_chat"], by=message.from_user,
+                      lines=[f"<b>Error:</b> <code>{html.escape(str(e))}</code>"])
             await client.send_message(
                 message.chat.id,
                 f"<b>⚠️ Couldn't Edit The Message For The User:</b>\n<code>{html.escape(str(e))}</code>",
