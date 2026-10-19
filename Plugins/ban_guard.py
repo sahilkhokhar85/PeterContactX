@@ -10,6 +10,7 @@ import logging
 from pyrogram import Client, filters, StopPropagation
 
 from database import is_banned, is_admin
+from logchannel import log_event, once_per
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +31,14 @@ async def _blocked(user) -> bool:
 @Client.on_message(filters.incoming, group=-5)
 async def block_banned_messages(client, message):
     if await _blocked(message.from_user):
+        if once_per(("banned", message.from_user.id), 600):   # a banned spammer can't flood the log channel
+            log_event(client, "🚫 Banned User Message (Ignored)", user=message.from_user, message=message)
         raise StopPropagation
 
 
 @Client.on_callback_query(group=-5)
 async def block_banned_callbacks(client, query):
     if await _blocked(query.from_user):
+        if once_per(("banned", query.from_user.id), 600):
+            log_event(client, "🚫 Banned User Button Press (Ignored)", user=query.from_user)
         raise StopPropagation
