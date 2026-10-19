@@ -20,7 +20,7 @@ from database import (
     total_users_count, get_admins, get_user, is_banned, is_admin,
 )
 from Plugins.contact import resolve_reply_target
-from logchannel import log_text
+from logchannel import log_text, log_event, _by_line
 
 try:
     import psutil
@@ -67,13 +67,13 @@ def ids_from_file_text(text: str) -> set:
     return ids
 
 
-def _ids_log(title: str, admin_id: int, ids: set) -> str:
+def _ids_log(title: str, admin, ids: set) -> str:
     shown = sorted(ids)[:20]
     more = f"\n<b>+ {len(ids) - len(shown)} More</b>" if len(ids) > len(shown) else ""
     return (
         f"<b>{title}</b>\n\n"
         + "\n".join(f"<code>{i}</code>" for i in shown) + more
-        + f"\n\n<b>👮 By:</b> <code>{admin_id}</code>"
+        + "\n\n" + _by_line(admin)
     )
 
 
@@ -117,7 +117,7 @@ async def ban_cmd(client: Client, message: Message):
     ids -= protected
     new = await ban_users(ids) if ids else 0
     if ids:
-        log_text(client, _ids_log("🚫 BANNED", message.from_user.id, ids))
+        log_text(client, _ids_log("🚫 BANNED", message.from_user, ids))
     text = (
         f"<b>✅ Banned {new} New Id(s).</b>\n"
         f"<b>Already Banned:</b> <code>{len(ids) - new}</code>\n"
@@ -139,7 +139,7 @@ async def unban_cmd(client: Client, message: Message):
             "<b>Or Reply To A Forwarded Message / A .txt File Of Ids With /unban</b>"
         )
     removed = await unban_users(ids)
-    log_text(client, _ids_log("✅ UNBANNED", message.from_user.id, ids))
+    log_text(client, _ids_log("✅ UNBANNED", message.from_user, ids))
     await message.reply_text(
         f"<b>✅ Unbanned {removed} Id(s).</b>\n"
         f"<b>Not In The Ban List:</b> <code>{len(ids) - removed}</code>\n"
@@ -153,6 +153,7 @@ async def banlist_cmd(client: Client, message: Message):
     ids = await get_banned_users()
     if not ids:
         return await message.reply_text("<b>The Ban List Is Empty.</b>")
+    log_event(client, "📄 Ban List Downloaded", by=message.from_user, lines=[f"<b>🚫 Ids:</b> <code>{len(ids)}</code>"])
     buf = io.BytesIO("\n".join(str(i) for i in ids).encode("utf-8"))
     buf.name = "banned_ids.txt"
     await message.reply_document(buf, caption=f"<b>🚫 Banned Ids: {len(ids)}</b>")
@@ -168,6 +169,7 @@ async def bot_status(client: Client, message: Message):
     except Exception:
         cpu = ram = 0
     uptime = get_readable_time(int(time.time() - BOT_START_TIME))
+    log_event(client, "📊 Bot Status Checked", by=message.from_user)
     text = (
         "<b>🤖 BOT STATUS !!</b>\n\n"
         f"<b>👤 Users -</b> <code>{total_users}</code>\n"
@@ -188,6 +190,7 @@ async def info_cmd(client: Client, message: Message):
             "<b>Usage:</b> <b>Reply To A Forwarded Message With /info, Or Send</b> <code>/info user_id</code>"
         )
     for user_id in list(ids)[:5]:
+        log_event(client, "🔎 User Info Checked", uid=user_id, by=message.from_user)
         doc = await get_user(user_id)
         lines = [f"<b>👤 User</b> <code>{user_id}</code>"]
         if doc:
