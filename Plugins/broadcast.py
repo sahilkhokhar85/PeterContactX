@@ -20,7 +20,7 @@ from pyrogram.errors import FloodWait, InputUserDeactivated, UserIsBlocked, Peer
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import BROADCAST_CONCURRENCY
-from logchannel import log_text
+from logchannel import log_event
 from database import admin_perm, get_broadcast_targets, delete_user, is_banned, get_user
 
 # How many users we message at once. Telegram's flood limits are mostly per chat,
@@ -436,24 +436,27 @@ async def broadcast_answer(bot, query):
 
     if action == "bc_no":
         _JOBS.pop(token, None)
+        log_event(bot, "❌ Send Cancelled" if job.get("target") else "❌ Broadcast Cancelled",
+                  uid=job.get("target"), by=query.from_user)
         await query.answer("Cancelled.")
         return await query.message.edit_text("<b>❌ Cancelled. Nothing Was Sent.</b>")
 
     if job.get("target"):
         _JOBS.pop(token, None)   # one confirm = one send
         await query.answer("Sending...")
-        return await _run_direct(bot, query.message, job["target"], job["units"])
+        return await _run_direct(bot, query.message, job["target"], job["units"], query.from_user)
 
     if _lock().locked():
         return await query.answer("A broadcast is already running. Wait for it to finish.", show_alert=True)
 
     _JOBS.pop(token, None)   # one confirm = one broadcast (a second tap finds nothing)
     await query.answer("Broadcasting...")
-    await _run_broadcast(bot, query.message, job["units"])
+    await _run_broadcast(bot, query.message, job["units"], query.from_user)
 
 
-async def _run_direct(bot, sts, user_id, units):
+async def _run_direct(bot, sts, user_id, units, admin=None):
     """Send to one user and tell the admin exactly what happened."""
+    log_event(bot, "📨 Send To User Started", uid=user_id, by=admin, units=units)
     await sts.edit_text("<b>Sending...</b>")
     sent = 0
     reason = None
@@ -478,7 +481,11 @@ async def _run_direct(bot, sts, user_id, units):
             f"<b>Delivered Before The Error: {sent} Of {len(units)}</b>"
         )
     await sts.edit_text(text)
-    log_text(bot, text)
+    if reason is None:
+        log_event(bot, "✅ Sent To User", uid=user_id, by=admin, lines=[f"<b>📦 Messages:</b> <code>{sent}</code>"])
+    else:
+        log_event(bot, "❌ Not Sent To User", uid=user_id, by=admin,
+                  lines=[f"<b>{reason}</b>", f"<b>Delivered Before The Error:</b> <code>{sent}</code> Of <code>{len(units)}</code>"])
 
 
 async def _send_all(bot, targets, units, on_progress=None, every=20):
@@ -511,11 +518,13 @@ async def _send_all(bot, targets, units, on_progress=None, every=20):
     return counts
 
 
-async def _run_broadcast(bot, sts, units):
+async def _run_broadcast(bot, sts, units, admin=None):
     async with _lock():
         targets = await get_broadcast_targets()
         start_time = time.time()
         total_users = len(targets)
+        log_event(bot, "📣 Broadcast Started", by=admin,
+                  lines=[f"<b>👥 Users:</b> <code>{total_users}</code>"], units=units)
         await sts.edit_text("<b>📣 BROADCASTING…</b>")
 
         async def _progress(c):
@@ -524,4 +533,11 @@ async def _run_broadcast(bot, sts, units):
         c = await _send_all(bot, targets, units, _progress)
         final_text = _bot_text(c, total_users, True, time.time() - start_time)
         await sts.edit_text(final_text)
-        log_text(bot, final_text)
+        log_event(bot, "✅ Broadcast Completed", by=admin, lines=[
+            f"<b>👥 Total:</b> <code>{total_users}</code>",
+            f"<b>✅ Success:</b> <code>{c['success']}</code>",
+            f"<b>🚫 Blocked:</b> <code>{c['blocked']}</code>",
+            f"<b>🗑 Deleted:</b> <code>{c['deleted']}</code>",
+            f"<b>❌ Failed:</b> <code>{c['failed']}</code>",
+            f"<b>⏱ Time:</b> <code>{_dur(time.time() - start_time)}</code>",
+        ])
