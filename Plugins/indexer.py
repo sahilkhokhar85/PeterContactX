@@ -8,6 +8,7 @@ from pyrogram.errors import FloodWait
 from pyrogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 )
+from logchannel import log_event
 from database import (
     admin_filter, add_indexed_channel, add_content_item, is_indexed_channel,
     clear_content_index
@@ -101,6 +102,8 @@ async def do_index_cb(client: Client, query: CallbackQuery):
 
     chat_id, last_msg_id = target
     await add_indexed_channel(chat_id)
+    log_event(client, "🗂 Channel Indexing Started", by=query.from_user,
+              lines=[f"<b>📢 Chat:</b> <code>{chat_id}</code>", f"<b>Up To Message:</b> <code>{last_msg_id}</code>"])
     status = query.message
     await status.edit_text(f"<b>🔍 Indexing Started...</b> <b>(Up To Message</b> <code>{last_msg_id}</code><b>)</b>", parse_mode=HTML)
 
@@ -147,6 +150,9 @@ async def do_index_cb(client: Client, query: CallbackQuery):
             except Exception:
                 pass
 
+    log_event(client, "✅ Channel Indexing Complete", by=query.from_user,
+              lines=[f"<b>📢 Chat:</b> <code>{chat_id}</code>",
+                     f"<b>Scanned:</b> <code>{scanned}</code>", f"<b>Indexed:</b> <code>{added}</code>"])
     await status.edit_text(
         f"<b>✅ Indexing Complete</b>\n\n"
         f"<b>• Scanned:</b> <code>{scanned}</code>\n"
@@ -181,4 +187,5 @@ async def clearindex_cmd(client: Client, message: Message):
 @Client.on_callback_query(filters.regex("^do_clearindex$") & admin_filter)
 async def do_clearindex_cb(client: Client, query: CallbackQuery):
     await clear_content_index()
+    log_event(client, "🗑 Indexed Content Cleared", by=query.from_user)
     await query.message.edit_text("<b>🗑️ All Indexed Content Has Been Cleared.</b>", parse_mode=HTML)
