@@ -56,6 +56,7 @@ class Bot(Client):
         await log_now(self, f"<b>🤖 {html.escape(me.first_name)} Started !!</b>")
 
     async def stop(self, *args):
+        await log_now(self, "<b>🛑 Bot Stopped</b>")
         await super().stop()
         print("Bot stopped.")
 
