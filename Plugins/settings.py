@@ -12,6 +12,7 @@ from pyrogram.types import (
 )
 
 from texts import SETTINGS_IMAGE
+from logchannel import log_event, clip
 from database import (
     admin_filter, admin_perm, admins_count, banned_users_count, total_users_count,
     get_auto_replies, add_auto_reply, remove_auto_reply,
@@ -64,6 +65,7 @@ def main_menu_markup():
 @Client.on_message(filters.command(["settings", "menu"]) & filters.private & settings_filter)
 async def settings_cmd(client: Client, message: Message):
     pending.pop(message.from_user.id, None)
+    log_event(client, "⚙️ Settings Panel Opened", by=message.from_user)
     try:
         await client.send_photo(message.chat.id, SETTINGS_IMAGE, caption=MAIN_TEXT,
                                 reply_markup=main_menu_markup(), parse_mode=HTML)
@@ -112,6 +114,7 @@ async def ar_add_cb(client: Client, query: CallbackQuery):
 async def ar_del_cb(client: Client, query: CallbackQuery):
     keyword = query.data.split("ar_del:", 1)[1]
     await remove_auto_reply(keyword)
+    log_event(client, "🗑 Auto Reply Removed", by=query.from_user, lines=[f"<b>🔑 Keyword:</b> <code>{html.escape(keyword)}</code>"])
     await query.answer("Removed.")
     text, markup = await render_ar_menu()
     await edit(query, text, reply_markup=markup, parse_mode=HTML)
@@ -175,6 +178,10 @@ async def fj_mode_cb(client: Client, query: CallbackQuery):
 
     await add_force_channel(temp["chat"], mode=mode, link=link, chat_id=temp["chat_id"])
     pending.pop(query.from_user.id, None)
+    log_event(client, "➕ Force Join Chat Added", by=query.from_user, lines=[
+        f"<b>📢 Chat:</b> {html.escape(str(temp['title'] or temp['chat']))} (<code>{html.escape(str(temp['chat']))}</code>)",
+        f"<b>Mode:</b> {'Join Request' if mode == 'request' else 'Normal'}",
+    ])
     await query.answer("Added.")
     text, markup = await render_fj_menu()
     title = html.escape(temp["title"] or "chat")
@@ -188,6 +195,7 @@ async def fj_mode_cb(client: Client, query: CallbackQuery):
 async def fj_del_cb(client: Client, query: CallbackQuery):
     chat = query.data.split("fj_del:", 1)[1]
     await remove_force_channel(chat)
+    log_event(client, "➖ Force Join Chat Removed", by=query.from_user, lines=[f"<b>📢 Chat:</b> <code>{html.escape(chat)}</code>"])
     await query.answer("Removed.")
     text, markup = await render_fj_menu()
     await edit(query, text, reply_markup=markup, parse_mode=HTML)
@@ -241,6 +249,10 @@ async def pending_input_handler(client: Client, message: Message):
     elif action == "ar_add_reply":
         await add_auto_reply(temp["keyword"], message.text.html)
         pending.pop(admin_id, None)
+        log_event(client, "➕ Auto Reply Added", by=message.from_user, lines=[
+            f"<b>🔑 Keyword:</b> <code>{html.escape(temp['keyword'])}</code>",
+            f"<b>💬 Reply:</b> {clip(message.text)}",
+        ])
         text, markup = await render_ar_menu()
         await send_plain(client, message, f"<b>✅ Auto-Reply Added For Keyword</b> <code>{html.escape(temp['keyword'])}</code><b>.</b>")
         await send_plain(client, message, text, reply_markup=markup)
