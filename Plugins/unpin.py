@@ -134,23 +134,42 @@ def _result_text(c, total, final, secs):
     return "\n".join("" if l == "" else (_bar_line(c["done"], total) if l is None else f"<b>{l}</b>") for l in lines)
 
 
+async def _what_lines(bot, chosen):
+    """Log lines + copies of the messages that are being unpinned (found again through their saved source)."""
+    lines, copies = [], []
+    for b in chosen:
+        lines.append(f"<b>📌 Unpin:</b> <code>{html.escape(b['snippet'])}</code> ({b['n']} {_users(b['n'])})")
+        src = b.get("src") or {}
+        if src.get("ids"):
+            try:
+                msgs = await bot.get_messages(src["chat"], src["ids"])
+                msgs = [m for m in (msgs if isinstance(msgs, list) else [msgs]) if m and not getattr(m, "empty", False)]
+                if msgs:
+                    copies.append(msgs)
+            except Exception:
+                pass   # the original message is gone: the text line above still tells which one it was
+    return lines, copies
+
+
 async def _execute(bot, sts, sess, everything, admin):
     user = sess["user"]
     async with _lock():
         if everything:
             ids = [user] if user else [t["user_id"] for t in await get_broadcast_targets()]
             plan = {uid: None for uid in ids}
-            what = "All Pinned Messages"
+            chosen = []
         else:
             chosen = [sess["batches"][i] for i in sorted(sess["sel"])]
             plan = defaultdict(list)
             for doc in await get_pin_records([b["_id"] for b in chosen], user):
                 plan[doc["user_id"]].append((doc["_id"], doc["message_id"]))
-            what = f"{len(chosen)} Pinned Message(s)"
         total = len(plan)
         start = time.time()
+        shown, copies = await _what_lines(bot, [] if everything else chosen)
+        if everything:
+            shown = ["<b>📌 Unpin:</b> <code>Everything In The Chat</code>"]
         log_event(bot, "📌 Unpin Started", uid=user, by=admin,
-                  lines=[f"<b>📌 What:</b> <code>{what}</code>", f"<b>👥 Users:</b> <code>{total}</code>"])
+                  lines=shown + [f"<b>👥 Users:</b> <code>{total}</code>"], units=copies)
         await sts.edit_text("<b>📌 UNPINNING…</b>")
 
         counts = {"done": 0, "success": 0, "blocked": 0, "deleted": 0, "failed": 0}
@@ -197,8 +216,7 @@ async def _execute(bot, sts, sess, everything, admin):
         else:
             text = _result_text(counts, total, True, time.time() - start)
         await sts.edit_text(text)
-        log_event(bot, "✅ Unpin Completed", uid=user, by=admin, lines=[
-            f"<b>📌 What:</b> <code>{what}</code>",
+        log_event(bot, "✅ Unpin Completed", uid=user, by=admin, lines=shown + [
             f"<b>👥 Total:</b> <code>{total}</code>",
             f"<b>✅ Success:</b> <code>{counts['success']}</code>",
             f"<b>🚫 Blocked:</b> <code>{counts['blocked']}</code>",
