@@ -25,6 +25,8 @@ content_col = db.content_index
 indexed_channels_col = db.indexed_channels
 msg_map_col = db.msg_map
 msg_links_col = db.msg_links
+pin_batches_col = db.pin_batches
+pin_records_col = db.pin_records
 
 
 def _now():
@@ -42,6 +44,8 @@ async def ensure_indexes():
         (join_requests_col, [("user_id", 1), ("chat_id", 1)], {"unique": True}),
         (msg_links_col, [("chat_id", 1), ("msg_id", 1), ("peer_chat", 1)], {"unique": True}),
         (msg_links_col, [("at", 1)], {"expireAfterSeconds": MESSAGE_MAP_DAYS * 86400}),
+        (pin_records_col, [("batch", 1), ("user_id", 1)], {}),
+        (pin_records_col, [("user_id", 1)], {}),
     ]
     for col, keys, kwargs in specs:
         try:
@@ -84,6 +88,55 @@ async def save_link(chat_a: int, msg_a: int, chat_b: int, msg_b: int, kind: str)
 async def get_links(chat_id: int, msg_id: int) -> list:
     """[{peer_chat, peer_msg, kind}] for this message (empty when it was never relayed)."""
     return [d async for d in msg_links_col.find({"chat_id": chat_id, "msg_id": msg_id})]
+
+
+# ---------------- Pinned messages (so a chosen pin can be removed again with /unpin) ----------------
+# A "batch" is one broadcast / /send that pinned a message; every pinned copy is one record
+# (batch, user_id, message_id). Records are deleted as soon as they are unpinned.
+
+async def create_pin_batch(batch_id: str, snippet: str, admin_id):
+    await pin_batches_col.insert_one({"_id": batch_id, "t": _now(), "snippet": snippet, "admin": admin_id})
+
+async def add_pin_record(batch_id: str, user_id: int, message_id: int):
+    await pin_records_col.insert_one({"batch": batch_id, "user_id": user_id, "message_id": message_id})
+
+async def list_pin_batches(user_id=None, limit: int = 10) -> list:
+    """Newest first: [{_id, t, snippet, n}] where n = how many users still have that pin."""
+    if user_id is None:
+        cursor = pin_batches_col.find({})
+    else:
+        ids = await pin_records_col.distinct("batch", {"user_id": user_id})
+        cursor = pin_batches_col.find({"_id": {"$in": ids}})
+    out = []
+    async for doc in cursor.sort("t", -1).limit(limit):
+        query = {"batch": doc["_id"]}
+        if user_id is not None:
+            query["user_id"] = user_id
+        doc["n"] = await pin_records_col.count_documents(query)
+        if doc["n"]:
+            out.append(doc)
+    return out
+
+async def get_pin_records(batch_ids, user_id=None) -> list:
+    query = {"batch": {"$in": list(batch_ids)}}
+    if user_id is not None:
+        query["user_id"] = user_id
+    return [d async for d in pin_records_col.find(query)]
+
+async def delete_pin_records(record_ids):
+    if record_ids:
+        await pin_records_col.delete_many({"_id": {"$in": list(record_ids)}})
+
+async def delete_pin_records_for_users(user_ids):
+    if user_ids:
+        await pin_records_col.delete_many({"user_id": {"$in": list(user_ids)}})
+
+async def prune_pin_batches():
+    """Removes batches that have no pinned copy left (a batch younger than 10 minutes may still be filling up)."""
+    old = _now() - datetime.timedelta(minutes=10)
+    async for doc in pin_batches_col.find({"t": {"$lt": old}}, {"_id": 1}):
+        if not await pin_records_col.count_documents({"batch": doc["_id"]}, limit=1):
+            await pin_batches_col.delete_one({"_id": doc["_id"]})
 
 
 # ---------------- Users ----------------
