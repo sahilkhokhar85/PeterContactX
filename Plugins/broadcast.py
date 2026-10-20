@@ -135,7 +135,8 @@ async def _new_batch(units, pin, admin):
     for i in pin or ():
         try:
             batch = secrets.token_hex(4)
-            await create_pin_batch(batch, _snippet(units[i][0]), getattr(admin, "id", admin))
+            src = {"chat": units[i][0].chat.id, "ids": [m.id for m in units[i]]}
+            await create_pin_batch(batch, _snippet(units[i][0]), getattr(admin, "id", admin), src)
             batches[i] = batch
         except Exception:
             pass
@@ -591,7 +592,12 @@ async def broadcast_answer(bot, query):
 
 
 def _pin_log(units, pin):
-    return [f"<b>📌 Pin:</b> <code>{_pin_name(len(units), pin)}</code>"] if pin is not None else []
+    """Log lines: which messages get pinned."""
+    out = []
+    for i in pin or ():
+        num = f"Message {i + 1} · " if len(units) > 1 else ""
+        out.append(f"<b>📌 Pin:</b> <code>{num}{html.escape(_snippet(units[i][0]))}</code>")
+    return out
 
 
 async def _run_direct(bot, sts, user_id, units, admin=None, pin=None):
