@@ -24,7 +24,8 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import BROADCAST_CONCURRENCY
 from logchannel import log_event
-from database import admin_perm, get_broadcast_targets, delete_user, is_banned, get_user
+from database import (admin_perm, get_broadcast_targets, delete_user, is_banned, get_user,
+                      create_pin_batch, add_pin_record, prune_pin_batches)
 
 # How many users we message at once. Telegram's flood limits are mostly per chat,
 # so sending to many *different* users concurrently is safe and much faster.
@@ -89,20 +90,61 @@ async def _deliver_unit(client, user_id, unit):
         return first
 
 
-async def _pin(client, user_id, msg):
-    """Pins an already sent message in the user's chat (both sides, no extra notification).
-    A failed pin never fails the delivery."""
+async def _pin(client, user_id, msg, batch=None):
+    """Pins an already sent message in the user's chat (both sides, no extra notification) and remembers it
+    (batch) so /unpin can remove it later. A failed pin never fails the delivery."""
     if msg is None:
         return False
     for _ in range(FLOOD_RETRIES):
         try:
             await client.pin_chat_message(user_id, msg.id, disable_notification=True, both_sides=True)
-            return True
         except FloodWait as e:
             await asyncio.sleep(e.value + 1)
+            continue
         except Exception:
             return False
+        if batch:
+            try:
+                await add_pin_record(batch, int(user_id), msg.id)
+            except Exception:
+                pass   # the pin worked; only the memory of it is missing
+        return True
     return False
+
+
+_KIND = (("photo", "[Photo]"), ("video", "[Video]"), ("animation", "[GIF]"), ("sticker", "[Sticker]"),
+         ("voice", "[Voice]"), ("audio", "[Audio]"), ("video_note", "[Video Note]"), ("document", "[File]"))
+
+
+def _snippet(msg) -> str:
+    """Short label of a message for the /unpin list."""
+    text = " ".join(str(getattr(msg, "text", None) or getattr(msg, "caption", None) or "").split())
+    if text:
+        return text if len(text) <= 30 else text[:30] + "…"
+    for attr, label in _KIND:
+        if getattr(msg, attr, None):
+            return label
+    return "[Message]"
+
+
+async def _new_batch(units, pin, admin):
+    """Starts the pin memory of one broadcast / send. Never raises (no memory = pins still work)."""
+    if pin is None:
+        return None
+    try:
+        batch = secrets.token_hex(4)
+        await create_pin_batch(batch, _snippet(units[pin][0]), getattr(admin, "id", admin))
+        return batch
+    except Exception:
+        return None
+
+
+async def _end_batch(batch):
+    if batch:
+        try:
+            await prune_pin_batches()
+        except Exception:
+            pass
 
 
 async def _deliver_with_retry(client, user_id, unit):
@@ -118,7 +160,7 @@ async def _deliver_with_retry(client, user_id, unit):
             await asyncio.sleep(e.value + 1)
 
 
-async def broadcast_messages(client, user_id, units, pin=None):
+async def broadcast_messages(client, user_id, units, pin=None, batch=None):
     """Send every unit to one user, in order. `pin` = index of the unit to pin (or None).
     Returns (ok, reason, pinned)."""
     pinned = False
@@ -126,7 +168,7 @@ async def broadcast_messages(client, user_id, units, pin=None):
         for i, unit in enumerate(units):
             sent = await _deliver_with_retry(client, user_id, unit)
             if i == pin:
-                pinned = await _pin(client, user_id, sent)
+                pinned = await _pin(client, user_id, sent, batch)
         return True, "Success", pinned
     except InputUserDeactivated:
         await delete_user(int(user_id))
@@ -550,12 +592,13 @@ async def _run_direct(bot, sts, user_id, units, admin=None, pin=None):
     sent = 0
     pinned = False
     reason = None
+    batch = await _new_batch(units, pin, admin)
     try:
         for i, unit in enumerate(units):
             first = await _deliver_with_retry(bot, user_id, unit)
             sent += 1
             if i == pin:
-                pinned = await _pin(bot, user_id, first)
+                pinned = await _pin(bot, user_id, first, batch)
     except UserIsBlocked:
         reason = "That User Has Blocked The Bot."
     except InputUserDeactivated:
@@ -575,6 +618,7 @@ async def _run_direct(bot, sts, user_id, units, admin=None, pin=None):
             f"<b>Delivered Before The Error: {sent} Of {len(units)}</b>"
         )
     await sts.edit_text(text)
+    await _end_batch(batch)
     if reason is None:
         extra = [f"<b>📌 Pinned:</b> <code>{'yes' if pinned else 'no'}</code>"] if pin is not None else []
         log_event(bot, "✅ Sent To User", uid=user_id, by=admin,
@@ -584,7 +628,7 @@ async def _run_direct(bot, sts, user_id, units, admin=None, pin=None):
                   lines=[f"<b>{reason}</b>", f"<b>Delivered Before The Error:</b> <code>{sent}</code> Of <code>{len(units)}</code>"])
 
 
-async def _send_all(bot, targets, units, on_progress=None, every=20, pin=None):
+async def _send_all(bot, targets, units, on_progress=None, every=20, pin=None, batch=None):
     """Send `units` to every target ({"user_id": ...}), CONCURRENCY users at a time, and return the counts.
     on_progress(counts) is awaited every `every` finished users."""
     counts = {"done": 0, "success": 0, "blocked": 0, "deleted": 0, "failed": 0, "pinned": 0}
@@ -592,7 +636,7 @@ async def _send_all(bot, targets, units, on_progress=None, every=20, pin=None):
 
     async def _send(uid):
         async with sem:
-            return await broadcast_messages(bot, uid, units, pin)
+            return await broadcast_messages(bot, uid, units, pin, batch)
 
     tasks = [asyncio.create_task(_send(t["user_id"])) for t in targets]
     for coro in asyncio.as_completed(tasks):
@@ -628,7 +672,9 @@ async def _run_broadcast(bot, sts, units, admin=None, pin=None):
         async def _progress(c):
             await sts.edit_text(_bot_text(c, total_users, False, time.time() - start_time, pin))
 
-        c = await _send_all(bot, targets, units, _progress, pin=pin)
+        batch = await _new_batch(units, pin, admin)
+        c = await _send_all(bot, targets, units, _progress, pin=pin, batch=batch)
+        await _end_batch(batch)
         final_text = _bot_text(c, total_users, True, time.time() - start_time, pin)
         await sts.edit_text(final_text)
         log_event(bot, "✅ Broadcast Completed", by=admin, lines=[
