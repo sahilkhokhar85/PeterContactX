@@ -10,8 +10,9 @@
 
 /send <user_id> works exactly the same way, but the messages go ONLY to that one user.
 
-Pin: under the preview you can choose ONE message to pin in every user's chat (one message: a Pin ON/OFF
-button, several messages: a number button per message). Nothing is pinned unless you choose it.
+Pin: under the preview you can choose which messages to pin in every user's chat, as many as you like
+(one message: a Pin ON/OFF button, several messages: a number button per message). Nothing is pinned
+unless you choose it. `pin` below is the sorted list of chosen message numbers (0-based) or None.
 """
 import asyncio
 import html
@@ -128,19 +129,21 @@ def _snippet(msg) -> str:
 
 
 async def _new_batch(units, pin, admin):
-    """Starts the pin memory of one broadcast / send. Never raises (no memory = pins still work)."""
-    if pin is None:
-        return None
-    try:
-        batch = secrets.token_hex(4)
-        await create_pin_batch(batch, _snippet(units[pin][0]), getattr(admin, "id", admin))
-        return batch
-    except Exception:
-        return None
+    """Starts the pin memory: one batch per pinned message, so /unpin can take them down one by one.
+    Returns {message index: batch id}. Never raises (no memory = pins still work)."""
+    batches = {}
+    for i in pin or ():
+        try:
+            batch = secrets.token_hex(4)
+            await create_pin_batch(batch, _snippet(units[i][0]), getattr(admin, "id", admin))
+            batches[i] = batch
+        except Exception:
+            pass
+    return batches
 
 
 async def _end_batch(batch):
-    if batch:
+    if batch:   # {index: batch id}
         try:
             await prune_pin_batches()
         except Exception:
@@ -161,14 +164,16 @@ async def _deliver_with_retry(client, user_id, unit):
 
 
 async def broadcast_messages(client, user_id, units, pin=None, batch=None):
-    """Send every unit to one user, in order. `pin` = index of the unit to pin (or None).
-    Returns (ok, reason, pinned)."""
+    """Send every unit to one user, in order. `pin` = indexes of the units to pin (or None).
+    Returns (ok, reason, pinned): pinned = every chosen message was pinned."""
     pinned = False
+    pins_ok = []
     try:
         for i, unit in enumerate(units):
             sent = await _deliver_with_retry(client, user_id, unit)
-            if i == pin:
-                pinned = await _pin(client, user_id, sent, batch)
+            if pin and i in pin:
+                pins_ok.append(await _pin(client, user_id, sent, (batch or {}).get(i)))
+                pinned = all(pins_ok)
         return True, "Success", pinned
     except InputUserDeactivated:
         await delete_user(int(user_id))
@@ -262,10 +267,13 @@ def _bot_text(c, total, final, secs, pin=None):
 # ---------------- preview ----------------
 
 def _pin_name(n, pin):
-    """What the 'Pin' line shows."""
+    """What the 'Pin' line shows (pin = chosen message numbers, 0-based)."""
+    chosen = sorted(pin or ())
     if n == 1:
-        return "ON" if pin == 0 else "OFF"
-    return "None" if pin is None else f"Message {pin + 1}"
+        return "ON" if chosen else "OFF"
+    if not chosen:
+        return "None"
+    return ("Message " if len(chosen) == 1 else "Messages ") + ", ".join(str(i + 1) for i in chosen)
 
 
 def _preview_text(job):
@@ -275,7 +283,7 @@ def _preview_text(job):
         f"1 Album · {len(units[0])} Items" if n == 1 else f"{n} Messages (In Order)")
     pin_lines = ["", f"📌 Pin: {_pin_name(n, job.get('pin'))}"]
     if n > 1:
-        pin_lines += ["", "👇 Tap A Number To Pin That Message"]
+        pin_lines += ["", "👇 Tap Numbers To Pin Messages"]
     check = ["", "⚠️ Check Once — Sending can't be undone."]
 
     if job["target"]:
@@ -299,11 +307,11 @@ def _preview_text(job):
 
 def _preview_markup(token, job):
     n = len(job["units"])
-    pin = job.get("pin")
+    pin = job.get("pin") or set()
     if n == 1:
         pin_rows = [[InlineKeyboardButton(f"📌 Pin: {_pin_name(n, pin)}", callback_data=f"bc_pin:{token}:0")]]
     else:
-        nums = [InlineKeyboardButton(("✅ " if pin == i else "📌 ") + str(i + 1),
+        nums = [InlineKeyboardButton(("✅ " if i in pin else "📌 ") + str(i + 1),
                                      callback_data=f"bc_pin:{token}:{i}") for i in range(n)]
         pin_rows = [nums[i:i + 5] for i in range(0, len(nums), 5)]
     confirm = "✅ Confirm Send" if job["target"] else "✅ Confirm Broadcast"
@@ -328,7 +336,7 @@ async def _make_preview(bot, admin_id, chat_id, units, target=None):
 
     _clean_old_jobs()
     token = secrets.token_hex(4)
-    job = {"admin": admin_id, "units": units, "target": target, "t": time.time(), "pin": None}
+    job = {"admin": admin_id, "units": units, "target": target, "t": time.time(), "pin": set()}
     if target:
         job["label"] = await _user_label(bot, target)
     else:
@@ -522,7 +530,7 @@ async def collect_buttons(bot, query):
 
 @Client.on_callback_query(filters.regex(r"^bc_pin:[0-9a-f]{8}:\d{1,3}$") & admin_perm("can_broadcast"))
 async def pin_choice(bot, query):
-    """Pin button(s) under the preview: pick the ONE message to pin (tap it again to unpin)."""
+    """Pin button(s) under the preview: pick the messages to pin, as many as you like (tap again to remove)."""
     _, token, idx = query.data.split(":")
     job = _JOBS.get(token)
     if not job:
@@ -537,9 +545,9 @@ async def pin_choice(bot, query):
     idx = int(idx)
     if idx >= len(job["units"]):
         return await query.answer()
-    job["pin"] = None if job.get("pin") == idx else idx
+    job["pin"] = set(job.get("pin") or ()) ^ {idx}
     job["t"] = time.time()
-    await query.answer("Pin ON" if job["pin"] is not None else "Pin OFF")
+    await query.answer("Pin ON" if idx in job["pin"] else "Pin OFF")
     try:
         await query.message.edit_text(_preview_text(job), reply_markup=_preview_markup(token, job))
     except Exception:
@@ -571,14 +579,15 @@ async def broadcast_answer(bot, query):
     if job.get("target"):
         _JOBS.pop(token, None)   # one confirm = one send
         await query.answer("Sending...")
-        return await _run_direct(bot, query.message, job["target"], job["units"], query.from_user, job.get("pin"))
+        return await _run_direct(bot, query.message, job["target"], job["units"], query.from_user,
+                                 sorted(job.get("pin") or ()) or None)
 
     if _lock().locked():
         return await query.answer("A broadcast is already running. Wait for it to finish.", show_alert=True)
 
     _JOBS.pop(token, None)   # one confirm = one broadcast (a second tap finds nothing)
     await query.answer("Broadcasting...")
-    await _run_broadcast(bot, query.message, job["units"], query.from_user, job.get("pin"))
+    await _run_broadcast(bot, query.message, job["units"], query.from_user, sorted(job.get("pin") or ()) or None)
 
 
 def _pin_log(units, pin):
@@ -590,15 +599,15 @@ async def _run_direct(bot, sts, user_id, units, admin=None, pin=None):
     log_event(bot, "📨 Send To User Started", uid=user_id, by=admin, lines=_pin_log(units, pin), units=units)
     await sts.edit_text("<b>Sending...</b>")
     sent = 0
-    pinned = False
+    pins_ok = []
     reason = None
     batch = await _new_batch(units, pin, admin)
     try:
         for i, unit in enumerate(units):
             first = await _deliver_with_retry(bot, user_id, unit)
             sent += 1
-            if i == pin:
-                pinned = await _pin(bot, user_id, first, batch)
+            if pin and i in pin:
+                pins_ok.append(await _pin(bot, user_id, first, batch.get(i)))
     except UserIsBlocked:
         reason = "That User Has Blocked The Bot."
     except InputUserDeactivated:
@@ -610,8 +619,10 @@ async def _run_direct(bot, sts, user_id, units, admin=None, pin=None):
 
     if reason is None:
         text = f"<b>✅ Sent To User</b> <code>{user_id}</code><b>. ({sent} Message(s))</b>"
-        if pin is not None:
-            text += "\n<b>📌 Pinned</b>" if pinned else "\n<b>⚠️ Couldn't Pin The Message.</b>"
+        if pin:
+            pinned = all(pins_ok) and len(pins_ok) == len(pin)
+            text += "\n<b>📌 Pinned</b>" if pinned else (
+                "\n<b>⚠️ Couldn't Pin Everything.</b>" if len(pin) > 1 else "\n<b>⚠️ Couldn't Pin The Message.</b>")
     else:
         text = (
             f"<b>❌ Not Sent To User</b> <code>{user_id}</code>\n<b>{reason}</b>\n"
@@ -620,7 +631,7 @@ async def _run_direct(bot, sts, user_id, units, admin=None, pin=None):
     await sts.edit_text(text)
     await _end_batch(batch)
     if reason is None:
-        extra = [f"<b>📌 Pinned:</b> <code>{'yes' if pinned else 'no'}</code>"] if pin is not None else []
+        extra = [f"<b>📌 Pinned:</b> <code>{'yes' if pinned else 'no'}</code>"] if pin else []
         log_event(bot, "✅ Sent To User", uid=user_id, by=admin,
                   lines=[f"<b>📦 Messages:</b> <code>{sent}</code>"] + extra)
     else:
