@@ -13,13 +13,17 @@
 Pin: under the preview you can choose which messages to pin in every user's chat, as many as you like
 (one message: a Pin ON/OFF button, several messages: a number button per message). Nothing is pinned
 unless you choose it. `pin` below is the sorted list of chosen message numbers (0-based) or None.
+
+Link preview: a text message that contains a link gets its own button under the preview (🔗 / 🚫) to switch
+the link preview OFF for that message. Default is ON, as the message was written. `nopreview` below is
+the sorted list of message numbers whose preview is off, or None.
 """
 import asyncio
 import html
 import secrets
 import time
 
-from pyrogram import Client, filters, StopPropagation
+from pyrogram import Client, filters, StopPropagation, enums, types
 from pyrogram.errors import FloodWait, InputUserDeactivated, UserIsBlocked, PeerIdInvalid
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -74,9 +78,41 @@ def _to_units(msgs):
     return units
 
 
-async def _deliver_unit(client, user_id, unit):
-    """Send one message, or one whole album, to user_id as a copy (no 'Forwarded from')."""
+def _has_link(unit) -> bool:
+    """True for a single text message that has a link in it (only those have a link preview to switch off)."""
+    if len(unit) != 1:
+        return False
+    m = unit[0]
+    if not getattr(m, "text", None):
+        return False
+    if getattr(m, "web_page", None):
+        return True
+    for e in getattr(m, "entities", None) or []:
+        kind = getattr(e, "type", "")
+        if str(getattr(kind, "name", kind)).upper() in ("URL", "TEXT_LINK"):
+            return True
+    return False
+
+
+async def _send_no_preview(client, user_id, msg):
+    """The text of `msg` (formatting kept) without a link preview."""
+    text = msg.text.html
+    options = getattr(types, "LinkPreviewOptions", None)   # newer pyrogram / kurigram
+    if options is not None:
+        try:
+            return await client.send_message(user_id, text, parse_mode=enums.ParseMode.HTML,
+                                             link_preview_options=options(is_disabled=True))
+        except TypeError:
+            pass
+    return await client.send_message(user_id, text, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+
+
+async def _deliver_unit(client, user_id, unit, preview=True):
+    """Send one message, or one whole album, to user_id as a copy (no 'Forwarded from').
+    preview=False: a text message goes out without its link preview."""
     if len(unit) == 1:
+        if not preview and _has_link(unit):
+            return await _send_no_preview(client, user_id, unit[0])
         return await unit[0].copy(chat_id=user_id)
     try:
         sent = await client.copy_media_group(user_id, unit[0].chat.id, unit[0].id)
@@ -151,12 +187,12 @@ async def _end_batch(batch):
             pass
 
 
-async def _deliver_with_retry(client, user_id, unit):
+async def _deliver_with_retry(client, user_id, unit, preview=True):
     """One unit, FloodWait waited out. Only the unit that waited is retried, so nothing is sent twice."""
     retries = 0
     while True:
         try:
-            return await _deliver_unit(client, user_id, unit)
+            return await _deliver_unit(client, user_id, unit, preview)
         except FloodWait as e:
             retries += 1
             if retries > FLOOD_RETRIES:
@@ -164,14 +200,14 @@ async def _deliver_with_retry(client, user_id, unit):
             await asyncio.sleep(e.value + 1)
 
 
-async def broadcast_messages(client, user_id, units, pin=None, batch=None):
+async def broadcast_messages(client, user_id, units, pin=None, batch=None, nopreview=None):
     """Send every unit to one user, in order. `pin` = indexes of the units to pin (or None).
     Returns (ok, reason, pinned): pinned = every chosen message was pinned."""
     pinned = False
     pins_ok = []
     try:
         for i, unit in enumerate(units):
-            sent = await _deliver_with_retry(client, user_id, unit)
+            sent = await _deliver_with_retry(client, user_id, unit, not (nopreview and i in nopreview))
             if pin and i in pin:
                 pins_ok.append(await _pin(client, user_id, sent, (batch or {}).get(i)))
                 pinned = all(pins_ok)
@@ -277,14 +313,31 @@ def _pin_name(n, pin):
     return ("Message " if len(chosen) == 1 else "Messages ") + ", ".join(str(i + 1) for i in chosen)
 
 
+def _link_units(units):
+    return [i for i, unit in enumerate(units) if _has_link(unit)]
+
+
+def _preview_name(n, off):
+    """The 'Link Preview' line (off = message numbers, 0-based, whose preview is switched off)."""
+    chosen = sorted(off or ())
+    if n == 1:
+        return "Link Preview: " + ("OFF" if chosen else "ON")
+    if not chosen:
+        return "Preview Off For: None"
+    return "Preview Off For: " + ("Message " if len(chosen) == 1 else "Messages ") + ", ".join(str(i + 1) for i in chosen)
+
+
 def _preview_text(job):
     n = len(job["units"])
     units = job["units"]
     what = "1 Message" if n == 1 and len(units[0]) == 1 else (
         f"1 Album · {len(units[0])} Items" if n == 1 else f"{n} Messages (In Order)")
     pin_lines = ["", f"📌 Pin: {_pin_name(n, job.get('pin'))}"]
+    links = _link_units(units)
+    if links:
+        pin_lines += ["", f"🔗 {_preview_name(n, job.get('nopreview'))}"]
     if n > 1:
-        pin_lines += ["", "👇 Tap Numbers To Pin Messages"]
+        pin_lines += ["", "👇 📌 Pins A Message" + (" · 🔗 Link Preview Off" if links else "")]
     check = ["", "⚠️ Check Once — Sending can't be undone."]
 
     if job["target"]:
@@ -315,6 +368,14 @@ def _preview_markup(token, job):
         nums = [InlineKeyboardButton(("✅ " if i in pin else "📌 ") + str(i + 1),
                                      callback_data=f"bc_pin:{token}:{i}") for i in range(n)]
         pin_rows = [nums[i:i + 5] for i in range(0, len(nums), 5)]
+    links = _link_units(job["units"])
+    off = job.get("nopreview") or set()
+    if links and n == 1:
+        pin_rows.append([InlineKeyboardButton(f"🔗 {_preview_name(n, off)}", callback_data=f"bc_lp:{token}:0")])
+    elif links:
+        nums = [InlineKeyboardButton(("🚫 " if i in off else "🔗 ") + str(i + 1), callback_data=f"bc_lp:{token}:{i}")
+                for i in links]
+        pin_rows += [nums[i:i + 5] for i in range(0, len(nums), 5)]
     confirm = "✅ Confirm Send" if job["target"] else "✅ Confirm Broadcast"
     return InlineKeyboardMarkup(pin_rows + [
         [InlineKeyboardButton(confirm, callback_data=f"bc_yes:{token}")],
@@ -337,7 +398,7 @@ async def _make_preview(bot, admin_id, chat_id, units, target=None):
 
     _clean_old_jobs()
     token = secrets.token_hex(4)
-    job = {"admin": admin_id, "units": units, "target": target, "t": time.time(), "pin": set()}
+    job = {"admin": admin_id, "units": units, "target": target, "t": time.time(), "pin": set(), "nopreview": set()}
     if target:
         job["label"] = await _user_label(bot, target)
     else:
@@ -555,6 +616,32 @@ async def pin_choice(bot, query):
         pass
 
 
+@Client.on_callback_query(filters.regex(r"^bc_lp:[0-9a-f]{8}:\d{1,3}$") & admin_perm("can_broadcast"))
+async def link_preview_choice(bot, query):
+    """🔗 buttons under the preview: switch the link preview of a message off / on again."""
+    _, token, idx = query.data.split(":")
+    job = _JOBS.get(token)
+    if not job:
+        await query.answer("This preview expired. Run /broadcast again.", show_alert=True)
+        try:
+            await query.message.edit_text("<b>⌛ Preview Expired. Run /broadcast Again.</b>")
+        except Exception:
+            pass
+        return
+    if job["admin"] != query.from_user.id:
+        return await query.answer("This broadcast belongs to another admin.", show_alert=True)
+    idx = int(idx)
+    if idx not in _link_units(job["units"]):
+        return await query.answer()
+    job["nopreview"] = set(job.get("nopreview") or ()) ^ {idx}
+    job["t"] = time.time()
+    await query.answer("Link Preview OFF" if idx in job["nopreview"] else "Link Preview ON")
+    try:
+        await query.message.edit_text(_preview_text(job), reply_markup=_preview_markup(token, job))
+    except Exception:
+        pass
+
+
 @Client.on_callback_query(filters.regex(r"^bc_(yes|no):[0-9a-f]{8}$") & admin_perm("can_broadcast"))
 async def broadcast_answer(bot, query):
     action, _, token = query.data.partition(":")
@@ -581,14 +668,21 @@ async def broadcast_answer(bot, query):
         _JOBS.pop(token, None)   # one confirm = one send
         await query.answer("Sending...")
         return await _run_direct(bot, query.message, job["target"], job["units"], query.from_user,
-                                 sorted(job.get("pin") or ()) or None)
+                                 sorted(job.get("pin") or ()) or None, sorted(job.get("nopreview") or ()) or None)
 
     if _lock().locked():
         return await query.answer("A broadcast is already running. Wait for it to finish.", show_alert=True)
 
     _JOBS.pop(token, None)   # one confirm = one broadcast (a second tap finds nothing)
     await query.answer("Broadcasting...")
-    await _run_broadcast(bot, query.message, job["units"], query.from_user, sorted(job.get("pin") or ()) or None)
+    await _run_broadcast(bot, query.message, job["units"], query.from_user, sorted(job.get("pin") or ()) or None,
+                         sorted(job.get("nopreview") or ()) or None)
+
+
+def _preview_log(nopreview):
+    if not nopreview:
+        return []
+    return ["<b>🔗 Link Preview:</b> <code>OFF For Message " + ", ".join(str(i + 1) for i in nopreview) + "</code>"]
 
 
 def _pin_log(units, pin):
@@ -600,9 +694,9 @@ def _pin_log(units, pin):
     return out
 
 
-async def _run_direct(bot, sts, user_id, units, admin=None, pin=None):
+async def _run_direct(bot, sts, user_id, units, admin=None, pin=None, nopreview=None):
     """Send to one user and tell the admin exactly what happened."""
-    log_event(bot, "📨 Send To User Started", uid=user_id, by=admin, lines=_pin_log(units, pin), units=units)
+    log_event(bot, "📨 Send To User Started", uid=user_id, by=admin, lines=_pin_log(units, pin) + _preview_log(nopreview), units=units)
     await sts.edit_text("<b>Sending...</b>")
     sent = 0
     pins_ok = []
@@ -610,7 +704,7 @@ async def _run_direct(bot, sts, user_id, units, admin=None, pin=None):
     batch = await _new_batch(units, pin, admin)
     try:
         for i, unit in enumerate(units):
-            first = await _deliver_with_retry(bot, user_id, unit)
+            first = await _deliver_with_retry(bot, user_id, unit, not (nopreview and i in nopreview))
             sent += 1
             if pin and i in pin:
                 pins_ok.append(await _pin(bot, user_id, first, batch.get(i)))
@@ -645,7 +739,7 @@ async def _run_direct(bot, sts, user_id, units, admin=None, pin=None):
                   lines=[f"<b>{reason}</b>", f"<b>Delivered Before The Error:</b> <code>{sent}</code> Of <code>{len(units)}</code>"])
 
 
-async def _send_all(bot, targets, units, on_progress=None, every=20, pin=None, batch=None):
+async def _send_all(bot, targets, units, on_progress=None, every=20, pin=None, batch=None, nopreview=None):
     """Send `units` to every target ({"user_id": ...}), CONCURRENCY users at a time, and return the counts.
     on_progress(counts) is awaited every `every` finished users."""
     counts = {"done": 0, "success": 0, "blocked": 0, "deleted": 0, "failed": 0, "pinned": 0}
@@ -653,7 +747,7 @@ async def _send_all(bot, targets, units, on_progress=None, every=20, pin=None, b
 
     async def _send(uid):
         async with sem:
-            return await broadcast_messages(bot, uid, units, pin, batch)
+            return await broadcast_messages(bot, uid, units, pin, batch, nopreview)
 
     tasks = [asyncio.create_task(_send(t["user_id"])) for t in targets]
     for coro in asyncio.as_completed(tasks):
@@ -677,20 +771,21 @@ async def _send_all(bot, targets, units, on_progress=None, every=20, pin=None, b
     return counts
 
 
-async def _run_broadcast(bot, sts, units, admin=None, pin=None):
+async def _run_broadcast(bot, sts, units, admin=None, pin=None, nopreview=None):
     async with _lock():
         targets = await get_broadcast_targets()
         start_time = time.time()
         total_users = len(targets)
         log_event(bot, "📣 Broadcast Started", by=admin,
-                  lines=[f"<b>👥 Users:</b> <code>{total_users}</code>"] + _pin_log(units, pin), units=units)
+                  lines=[f"<b>👥 Users:</b> <code>{total_users}</code>"] + _pin_log(units, pin) + _preview_log(nopreview),
+                  units=units)
         await sts.edit_text("<b>📣 BROADCASTING…</b>")
 
         async def _progress(c):
             await sts.edit_text(_bot_text(c, total_users, False, time.time() - start_time, pin))
 
         batch = await _new_batch(units, pin, admin)
-        c = await _send_all(bot, targets, units, _progress, pin=pin, batch=batch)
+        c = await _send_all(bot, targets, units, _progress, pin=pin, batch=batch, nopreview=nopreview)
         await _end_batch(batch)
         final_text = _bot_text(c, total_users, True, time.time() - start_time, pin)
         await sts.edit_text(final_text)
