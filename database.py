@@ -94,8 +94,9 @@ async def get_links(chat_id: int, msg_id: int) -> list:
 # A "batch" is one broadcast / /send that pinned a message; every pinned copy is one record
 # (batch, user_id, message_id). Records are deleted as soon as they are unpinned.
 
-async def create_pin_batch(batch_id: str, snippet: str, admin_id):
-    await pin_batches_col.insert_one({"_id": batch_id, "t": _now(), "snippet": snippet, "admin": admin_id})
+async def create_pin_batch(batch_id: str, snippet: str, admin_id, src=None):
+    """src = {"chat": id, "ids": [message ids]}: where the original message lives (shown in the log channel)."""
+    await pin_batches_col.insert_one({"_id": batch_id, "t": _now(), "snippet": snippet, "admin": admin_id, "src": src})
 
 async def add_pin_record(batch_id: str, user_id: int, message_id: int):
     await pin_records_col.insert_one({"batch": batch_id, "user_id": user_id, "message_id": message_id})
