@@ -13,7 +13,7 @@ import html
 import logging
 import time
 
-from pyrogram import enums
+from pyrogram import enums, types
 from pyrogram.errors import FloodWait
 
 from config import LOG_CHANNEL
@@ -49,6 +49,18 @@ def clip(text, limit: int = 300) -> str:
     """Short, HTML-safe excerpt of some text."""
     text = " ".join(str(text or "").split())
     return html.escape(text if len(text) <= limit else text[:limit] + "…")
+
+
+async def with_reply(fn, *args, reply_id, **kwargs):
+    """Calls fn(*args, **kwargs) as a reply to message `reply_id`: with the new `reply_parameters` where the
+    library has it, else with the old `reply_to_message_id` (no deprecation warning, works with both)."""
+    params = getattr(types, "ReplyParameters", None)
+    if params is not None:
+        try:
+            return await fn(*args, reply_parameters=params(message_id=reply_id), **kwargs)
+        except TypeError:
+            pass   # this version doesn't know it yet
+    return await fn(*args, reply_to_message_id=reply_id, **kwargs)
 
 
 # ---------------- the single ordered worker ----------------
@@ -120,10 +132,10 @@ def _by_line(by) -> str:
 async def _post(client, text: str, message=None, units=None):
     header = await _retry(lambda: client.send_message(LOG_CHANNEL, text, parse_mode=HTML))
     if message is not None:
-        await _retry(lambda: message.copy(LOG_CHANNEL, reply_to_message_id=header.id))
+        await _retry(lambda: with_reply(message.copy, LOG_CHANNEL, reply_id=header.id))
     for unit in units or []:
         for m in unit:
-            await _retry(lambda m=m: m.copy(LOG_CHANNEL, reply_to_message_id=header.id))
+            await _retry(lambda m=m: with_reply(m.copy, LOG_CHANNEL, reply_id=header.id))
 
 
 # ---------------- what gets logged ----------------
