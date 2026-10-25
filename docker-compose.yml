@@ -1,0 +1,8 @@
+services:
+  contactbot:
+    build: .
+    container_name: contactbot
+    restart: always
+    env_file: /home/administrator/petercontact.env
+    environment:
+      - PYTHONUNBUFFERED=1
