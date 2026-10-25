@@ -4,7 +4,7 @@ from pyrogram import Client
 from aiohttp import web
 from config import API_ID, API_HASH, BOT_TOKEN, LOG_CHANNEL
 from logchannel import log_now
-from database import ensure_indexes
+from database import ensure_indexes, delete_user
 
 routes = web.RouteTableDef()
 
@@ -51,6 +51,10 @@ class Bot(Client):
 
         me = await self.get_me()
         print(f"Bot Started as {me.first_name}")
+        try:   # the bot must never be in its own user list (it was added once by mistake)
+            await delete_user(me.id)
+        except Exception:
+            pass
         
         # start notice goes to the log channel only (nothing is sent to the owner's chat with the bot)
         await log_now(self, f"<b>🤖 {html.escape(me.first_name)} Started !!</b>")
