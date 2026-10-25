@@ -21,8 +21,6 @@ banned_col = db.banned
 auto_replies_col = db.auto_replies
 force_channels_col = db.force_channels
 join_requests_col = db.join_requests
-content_col = db.content_index
-indexed_channels_col = db.indexed_channels
 msg_map_col = db.msg_map
 msg_links_col = db.msg_links
 pin_batches_col = db.pin_batches
@@ -422,56 +420,3 @@ async def get_join_request(user_id: int, chat_id: int):
 
 async def clear_join_request(user_id: int, chat_id: int):
     await join_requests_col.delete_many({"user_id": user_id, "chat_id": chat_id})
-
-
-# ---------------- Content Index (scanned channel content, searchable) ----------------
-
-_content_index_ready = False
-
-async def ensure_content_text_index():
-    """Creates the Mongo text index once (safe to call repeatedly — no-ops after the first time)."""
-    global _content_index_ready
-    if _content_index_ready:
-        return
-    await content_col.create_index([("text", "text")])
-    _content_index_ready = True
-
-async def add_indexed_channel(chat_id: int):
-    await indexed_channels_col.update_one({"chat_id": chat_id}, {"$set": {"chat_id": chat_id}}, upsert=True)
-
-async def get_indexed_channels() -> list:
-    cursor = indexed_channels_col.find({})
-    return [doc["chat_id"] async for doc in cursor]
-
-async def is_indexed_channel(chat_id: int) -> bool:
-    return await indexed_channels_col.find_one({"chat_id": chat_id}) is not None
-
-async def add_content_item(chat_id: int, message_id: int, text: str, has_media: bool = False):
-    """Stores one scanned post (text/link/image caption) so it can be searched and re-sent later."""
-    if not text:
-        return
-    await ensure_content_text_index()
-    await content_col.update_one(
-        {"chat_id": chat_id, "message_id": message_id},
-        {"$set": {"chat_id": chat_id, "message_id": message_id, "text": text, "has_media": has_media}},
-        upsert=True
-    )
-
-async def content_count() -> int:
-    return await content_col.count_documents({})
-
-async def clear_content_index():
-    """Wipes all scanned content (registered channels stay registered, so auto-index of new posts keeps working)."""
-    await content_col.delete_many({})
-
-async def search_content(query: str, limit: int = 1, min_score: float = 0.0) -> list:
-    """Full-text search over indexed content. Returns the best-matching doc(s), best first.
-    Docs whose text score is below `min_score` are dropped (stops random posts being sent for 'ok', 'thanks', ...)."""
-    if not query:
-        return []
-    await ensure_content_text_index()
-    cursor = content_col.find(
-        {"$text": {"$search": query}},
-        {"score": {"$meta": "textScore"}, "chat_id": 1, "message_id": 1, "text": 1, "has_media": 1}
-    ).sort([("score", {"$meta": "textScore"})]).limit(limit)
-    return [doc async for doc in cursor if doc.get("score", 0) >= min_score]
