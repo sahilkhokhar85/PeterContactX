@@ -16,7 +16,7 @@ from database import (
     search_content,
     save_forward_map, get_forward_user, save_link, get_links,
 )
-from logchannel import log_user_message, log_admin_reply, log_event, once_per, clip
+from logchannel import log_user_message, log_admin_reply, log_event, once_per, clip, with_reply
 from Plugins.forcesub import is_subscribed, send_force_sub_prompt
 
 SENT_CONFIRM_DELETE_AFTER = 3  # seconds before "Message sent!" auto-deletes
@@ -211,10 +211,11 @@ async def admin_edited(client: Client, message: Message):
                 continue
             log_event(client, "⚠️ Reply Edit Failed", uid=link["peer_chat"], by=message.from_user,
                       lines=[f"<b>Error:</b> <code>{html.escape(str(e))}</code>"])
-            await client.send_message(
+            await with_reply(
+                client.send_message,
                 message.chat.id,
                 f"<b>⚠️ Couldn't Edit The Message For The User:</b>\n<code>{html.escape(str(e))}</code>",
-                parse_mode=enums.ParseMode.HTML, reply_to_message_id=message.id,
+                parse_mode=enums.ParseMode.HTML, reply_id=message.id,
             )
 
 
@@ -236,9 +237,10 @@ async def user_edited(client: Client, message: Message):
     for link in links:
         admin_id = link["peer_chat"]
         try:
-            await client.send_message(
+            await with_reply(
+                client.send_message,
                 admin_id, "<b>✏️ Edited Message !! 👇</b>",
-                parse_mode=enums.ParseMode.HTML, reply_to_message_id=link["peer_msg"],
+                parse_mode=enums.ParseMode.HTML, reply_id=link["peer_msg"],
             )
             fwd = await message.forward(admin_id)
             await save_forward_map(admin_id, fwd.id, user_id)
