@@ -7,13 +7,9 @@ from pyrogram import Client, filters, enums
 from pyrogram.errors import UserIsBlocked, InputUserDeactivated
 from pyrogram.types import Message
 
-from config import (
-    OWNERS, RATE_LIMIT_MESSAGES, RATE_LIMIT_SECONDS,
-    INDEX_MIN_SCORE, INDEX_MIN_QUERY_CHARS,
-)
+from config import OWNERS, RATE_LIMIT_MESSAGES, RATE_LIMIT_SECONDS
 from database import (
     add_user, is_banned, get_admins, admin_filter, find_auto_reply,
-    search_content,
     save_forward_map, get_forward_user, save_link, get_links,
 )
 from logchannel import log_user_message, log_admin_reply, log_event, once_per, clip, with_reply
@@ -24,7 +20,7 @@ SENT_CONFIRM_DELETE_AFTER = 3  # seconds before "Message sent!" auto-deletes
 # Admin commands. A reply that carries one of these is a command (e.g. replying
 # "/ban" to a user's forwarded message), NOT text to be sent to the user.
 ADMIN_COMMANDS = [
-    "settings", "menu", "restart", "clearindex",
+    "settings", "menu", "restart",
     "broadcast", "send", "done", "cancel",
     "ban", "unban", "banlist", "status", "info",
 ]
@@ -113,31 +109,6 @@ async def forward_to_admin(client: Client, message: Message):
     if not sent_to_any:
         log_event(client, "❌ Message Could Not Be Forwarded To Any Admin", user=message.from_user)
         return await message.reply("<b>❌ Error: Message Could Not Be Sent.</b>", parse_mode=enums.ParseMode.HTML)
-
-    # Indexed content match — if the user's text matches something scanned
-    # from a registered channel (see Plugins/indexer.py), send that directly
-    # instead of a generated AI reply. Short texts and weak matches are ignored.
-    text = (message.text or "").strip()
-    if text and not text.startswith("/") and len(text) >= INDEX_MIN_QUERY_CHARS:
-        matches = await search_content(text, limit=1, min_score=INDEX_MIN_SCORE)
-        if matches:
-            match = matches[0]
-            reply_text = match.get("text") or ""
-            try:
-                if match.get("has_media"):
-                    await client.copy_message(
-                        chat_id=user_id,
-                        from_chat_id=match["chat_id"],
-                        message_id=match["message_id"],
-                        caption=reply_text
-                    )
-                else:
-                    await message.reply(reply_text)
-                log_event(client, "🗂 Indexed Post Sent To User", user=message.from_user,
-                          lines=[f"<b>📄 Post:</b> {clip(reply_text)}"])
-                return
-            except Exception:
-                pass  # source post may be deleted/inaccessible — fall through below
 
     sent_msg = await message.reply(
         "<b>✅ Message Sent!</b>",
