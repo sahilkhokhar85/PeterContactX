@@ -28,13 +28,6 @@ DATABASE_NAME = os.environ.get("DATABASE_NAME", "MRNContactBot")
 RATE_LIMIT_MESSAGES = int(os.environ.get("RATE_LIMIT_MESSAGES", "6"))
 RATE_LIMIT_SECONDS = int(os.environ.get("RATE_LIMIT_SECONDS", "10"))
 
-# ---------------- Indexed-content auto answer ----------------
-# A user's text only gets an indexed post as the answer if Mongo's text score is
-# at least INDEX_MIN_SCORE and the text is at least INDEX_MIN_QUERY_CHARS long.
-# Raise INDEX_MIN_SCORE if the bot sends unrelated posts, lower it if it never matches.
-INDEX_MIN_SCORE = float(os.environ.get("INDEX_MIN_SCORE", "1.0"))
-INDEX_MIN_QUERY_CHARS = int(os.environ.get("INDEX_MIN_QUERY_CHARS", "4"))
-
 # ---------------- Broadcast ----------------
 # How many users are messaged at the same time (Telegram limits are per chat,
 # so many different users in parallel is fine).
