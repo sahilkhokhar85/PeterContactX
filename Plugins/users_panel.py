@@ -5,6 +5,7 @@ Adding / removing administrators needs the "Manage admins" right (owners always 
 """
 import asyncio
 import html
+import io
 import re
 
 from pyrogram import Client, filters
@@ -24,11 +25,15 @@ PAGE = 8
 manage_filter = admin_perm("can_manage_admins")
 
 _names = {}   # user id -> name shown on the screens
+_by_account = set()   # ids whose name came from the lookup account (the bot itself can't mention them)
 _missed = set()   # ids Telegram doesn't know: not asked again
 
 
 def _mention(uid: int, name: str) -> str:
-    return f'<a href="tg://user?id={uid}">{html.escape(_short(name, 25))}</a>'
+    """Clickable name. The bot can only make a real mention for users it knows; for the others the link opens
+    the profile in the Telegram app if the viewer's app knows that user."""
+    link = f"tg://openmessage?user_id={uid}" if uid in _by_account else f"tg://user?id={uid}"
+    return f'<a href="{link}">{html.escape(_short(name, 25))}</a>'
 
 
 def _short(text, n=18):
@@ -51,6 +56,8 @@ async def _name(client, uid: int, fetch: bool = True) -> str:
             name = None
     if not name and fetch and uid not in _missed:
         name = await userlookup.lookup_name(uid)   # optional account that knows more users than the bot
+        if name:
+            _by_account.add(uid)
     if name:
         if len(_names) > 2000:
             _names.clear()
@@ -209,7 +216,7 @@ def bn_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🚷 Ban A User", callback_data="bn_ban"),
          InlineKeyboardButton("✅ Unban A User", callback_data="bn_unban")],
-        [InlineKeyboardButton("📃 List Of Banned Users", callback_data="bl_list:0")],
+        [InlineKeyboardButton("📃 List Of Banned Users", callback_data="bl_export")],
         menu_back("um_menu"),
     ])
 
@@ -237,47 +244,17 @@ async def bn_ask_cb(client: Client, query: CallbackQuery):
     await edit(query, text, reply_markup=InlineKeyboardMarkup([menu_back("bn_menu")]))
 
 
-async def render_banned(client, page: int = 0, fetch: bool = False):
-    """-> (text, markup, ids whose name is still unknown). fetch=False never waits for Telegram (instant)."""
+@Client.on_callback_query(filters.regex("^bl_export$") & settings_filter)
+async def bl_export_cb(client: Client, query: CallbackQuery):
+    """Sends every banned id as a .txt file (same file as /banlist; /ban accepts it back)."""
     ids = await get_banned_users()
     if not ids:
-        return ("<b>📃 List Of Banned Users !!\n\nNo Banned Users Yet.</b>",
-                InlineKeyboardMarkup([menu_back("bn_menu")]), [])
-    pages = max(1, -(-len(ids) // PAGE))
-    page = min(max(page, 0), pages - 1)
-    chunk = ids[page * PAGE:(page + 1) * PAGE]
-    names = await asyncio.gather(*[_name(client, uid, fetch=fetch) for uid in chunk])
-    lines = []
-    for i, (uid, name) in enumerate(zip(chunk, names), page * PAGE + 1):
-        lines.append(f"{num_emoji(i)} {_mention(uid, name)} <code>{uid}</code>")
-    text = f"<b>📃 List Of Banned Users !!\n\n" + "\n".join(lines) + "</b>"
-    missing = [u for u, n in zip(chunk, names) if u not in _names and u not in _missed]
-    return text, InlineKeyboardMarkup(_nav("bl_list", page, len(ids), "bn_menu")), missing
-
-
-async def _fill_names(client, query, page, missing):
-    """Runs after the list is already on screen: asks Telegram for the missing names, then updates the list."""
-    try:
-        await asyncio.wait_for(asyncio.gather(*[_name(client, u) for u in missing]), 8)
-    except Exception:
-        return
-    if any(u in _names for u in missing):
-        try:
-            text, markup, _ = await render_banned(client, page)
-            await edit(query, text, reply_markup=markup)
-        except Exception:
-            pass
-
-
-@Client.on_callback_query(filters.regex(r"^bl_list:\d+$") & settings_filter)
-async def bl_list_cb(client: Client, query: CallbackQuery):
-    pending.pop(query.from_user.id, None)
-    await query.answer()
-    page = int(query.data.split(":")[1])
-    text, markup, missing = await render_banned(client, page)
-    await edit(query, text, reply_markup=markup)   # shown at once
-    if missing:
-        asyncio.create_task(_fill_names(client, query, page, missing))
+        return await query.answer("The Ban List Is Empty.", show_alert=True)
+    await query.answer("Sending...")
+    log_event(client, "📄 Ban List Downloaded", by=query.from_user, lines=[f"<b>🚫 Ids:</b> <code>{len(ids)}</code>"])
+    buf = io.BytesIO("\n".join(str(i) for i in ids).encode("utf-8"))
+    buf.name = "banned_ids.txt"
+    await client.send_document(query.message.chat.id, buf, caption=f"<b>🚫 Banned Ids: {len(ids)}</b>", parse_mode=HTML)
 
 
 # ============================================================
