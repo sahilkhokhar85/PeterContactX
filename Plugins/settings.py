@@ -104,7 +104,6 @@ def main_menu_markup():
 @Client.on_message(filters.command(["settings", "menu"]) & filters.private & settings_filter)
 async def settings_cmd(client: Client, message: Message):
     pending.pop(message.from_user.id, None)
-    log_event(client, "⚙️ Settings Panel Opened", by=message.from_user)
     await send_panel(client, message, MAIN_TEXT, reply_markup=main_menu_markup())
 
 @Client.on_callback_query(filters.regex("^noop$") & settings_filter)
