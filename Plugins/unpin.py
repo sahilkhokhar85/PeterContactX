@@ -168,8 +168,6 @@ async def _execute(bot, sts, sess, everything, admin):
         shown, copies = await _what_lines(bot, [] if everything else chosen)
         if everything:
             shown = ["<b>📌 Unpin:</b> <code>Everything In The Chat</code>"]
-        log_event(bot, "📌 Unpin Started", uid=user, by=admin,
-                  lines=shown + [f"<b>👥 Users:</b> <code>{total}</code>"], units=copies)
         await sts.edit_text("<b>📌 UNPINNING…</b>")
 
         counts = {"done": 0, "success": 0, "blocked": 0, "deleted": 0, "failed": 0}
@@ -223,7 +221,7 @@ async def _execute(bot, sts, sess, everything, admin):
             f"<b>🗑 Deleted:</b> <code>{counts['deleted']}</code>",
             f"<b>❌ Failed:</b> <code>{counts['failed']}</code>",
             f"<b>⏱ Time:</b> <code>{_dur(time.time() - start)}</code>",
-        ])
+        ], units=copies)
 
 
 # ---------------- buttons ----------------
