@@ -251,13 +251,10 @@ async def render_fj_menu():
             InlineKeyboardButton("🔻", callback_data=f"fj_dn:{c['chat']}"),
         ])
     buttons.append([InlineKeyboardButton("⬅ Back", callback_data="menu")])
-    listing = "\n".join(lines) if lines else "No Chats Added Yet."
-    text = (
-        "<b>🔑 Force Join !!\n\n"
-        f"{listing}\n\n"
-        "🔒 Private · 📢 Public · 📨 Join Request\n"
-        "❌ Remove · 🔺 Up · 🔻 Down</b>"
-    )
+    if lines:
+        text = "<b>🔑 Force Join !!\n\n" + "\n".join(lines) + "\n\n👇 ❌ Remove · 🔺🔻 Move</b>"
+    else:
+        text = "<b>🔑 Force Join !!\n\nNo Chats Added Yet.\n\n👇 Tap Add Chat To Start.</b>"
     return text, InlineKeyboardMarkup(buttons)
 
 @Client.on_callback_query(filters.regex("^fj_menu$") & settings_filter)
