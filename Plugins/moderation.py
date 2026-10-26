@@ -152,7 +152,6 @@ async def banlist_cmd(client: Client, message: Message):
     ids = await get_banned_users()
     if not ids:
         return await message.reply_text("<b>The Ban List Is Empty.</b>")
-    log_event(client, "📄 Ban List Downloaded", by=message.from_user, lines=[f"<b>🚫 Ids:</b> <code>{len(ids)}</code>"])
     buf = io.BytesIO("\n".join(str(i) for i in ids).encode("utf-8"))
     buf.name = "banned_ids.txt"
     await message.reply_document(buf, caption=f"<b>🚫 Banned Ids: {len(ids)}</b>")
@@ -168,7 +167,6 @@ async def bot_status(client: Client, message: Message):
     except Exception:
         cpu = ram = 0
     uptime = get_readable_time(int(time.time() - BOT_START_TIME))
-    log_event(client, "📊 Bot Status Checked", by=message.from_user)
     text = (
         "<b>🤖 BOT STATUS !!</b>\n\n"
         f"<b>👤 Users -</b> <code>{total_users}</code>\n"
@@ -189,7 +187,6 @@ async def info_cmd(client: Client, message: Message):
             "<b>Usage:</b> <b>Reply To A Forwarded Message With /info, Or Send</b> <code>/info user_id</code>"
         )
     for user_id in list(ids)[:5]:
-        log_event(client, "🔎 User Info Checked", uid=user_id, by=message.from_user)
         doc = await get_user(user_id)
         lines = [f"<b>👤 User</b> <code>{user_id}</code>"]
         if doc:
