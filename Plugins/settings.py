@@ -124,6 +124,29 @@ async def ar_del_cb(client: Client, query: CallbackQuery):
 # FORCE JOIN
 # ============================================================
 
+def _clean_chat(raw):
+    """What the admin typed -> (chat text kept in the database, target for the API), or (None, None) when it
+    can't be a chat. Accepts @username, username, t.me/username links, t.me/c/ID/.. links and numeric ids."""
+    parts = (raw or "").split()
+    text = parts[0] if parts else ""
+    link = re.match(r"(?:https?://)?(?:t|telegram)\.me/(.+)", text, re.I)
+    if link:
+        part = link.group(1).split("?")[0].strip("/")
+        pieces = part.split("/")
+        if pieces[0] == "c" and len(pieces) > 1 and pieces[1].isdigit():
+            number = int("-100" + pieces[1])
+            return str(number), number
+        if part.startswith("+") or part.lower().startswith("joinchat"):
+            return None, None   # an invite link can't be looked up by the bot
+        text = pieces[0]
+    text = text.lstrip("@")
+    if re.fullmatch(r"-?\d+", text):
+        number = int(text)
+        return str(number), number
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{3,31}", text):
+        return "@" + text, "@" + text
+    return None, None
+
 async def render_fj_menu():
     channels = await get_force_channel_docs()
     buttons = [
@@ -149,7 +172,7 @@ async def fj_menu_cb(client: Client, query: CallbackQuery):
 async def fj_add_cb(client: Client, query: CallbackQuery):
     pending[query.from_user.id] = {"action": "fj_add", "temp": {}}
     await edit(query, 
-        "<b>Send The Channel Username (e.g.</b> <code>@mychannel</code><b>) Or ID.\n"
+        "<b>Send The Channel Username (e.g.</b> <code>@mychannel</code><b>) Or ID, Or Forward Any Post From It.\n"
         "Make Sure The Bot Is An Admin In That Channel.</b>",
         reply_markup=cancel_btn(), parse_mode=HTML
     )
@@ -224,21 +247,25 @@ async def stats_cb(client: Client, query: CallbackQuery):
 # PENDING TEXT INPUT HANDLER (runs before other handlers)
 # ============================================================
 
-@Client.on_message(filters.private & admin_filter & filters.text, group=-1)
+@Client.on_message(filters.private & admin_filter & (filters.text | filters.forwarded), group=-1)
 async def pending_input_handler(client: Client, message: Message):
     admin_id = message.from_user.id
     state = pending.get(admin_id)
     if not state:
         return  # let normal handlers process this message
 
-    # An admin command (/settings, /ban ...) while the panel waits for input cancels that
-    # input and runs as a command - it must never be saved as a keyword/reply.
-    if message.text.startswith("/"):
-        pending.pop(admin_id, None)
-        return
-
     action = state["action"]
     temp = state["temp"]
+
+    # only "add a force join chat" understands a forwarded channel post; anything without text is not input here
+    if not message.text and not (action == "fj_add" and getattr(message, "forward_from_chat", None)):
+        return
+
+    # An admin command (/settings, /ban ...) while the panel waits for input cancels that
+    # input and runs as a command - it must never be saved as a keyword/reply.
+    if message.text and message.text.startswith("/"):
+        pending.pop(admin_id, None)
+        return
 
     # ---------- Automatic replies ----------
     if action == "ar_add_keyword":
@@ -259,8 +286,21 @@ async def pending_input_handler(client: Client, message: Message):
 
     # ---------- Force join ----------
     elif action == "fj_add":
-        chat = message.text.strip()
-        target = int(chat) if re.fullmatch(r"-?\d+", chat) else chat
+        source = getattr(message, "forward_from_chat", None)
+        if source is not None:   # a post forwarded from the channel: take the channel from it
+            target = source.id
+            chat = f"@{source.username}" if getattr(source, "username", None) else str(source.id)
+        else:
+            chat, target = _clean_chat(message.text)
+        if chat is None:
+            return await send_plain(
+                client, message,
+                "<b>❌ That Isn't A Usable Channel.</b>\n\n"
+                "<b>Send The</b> <code>@username</code><b>, A</b> <code>t.me/username</code> <b>Link, Or The Channel ID "
+                "(Starts With</b> <code>-100</code><b>).\n"
+                "A Private Invite Link (</b><code>t.me/+...</code><b>) Can't Be Used, Send The Channel ID Instead.</b>",
+                reply_markup=cancel_btn()
+            )
         try:
             info = await client.get_chat(target)
         except Exception as e:
