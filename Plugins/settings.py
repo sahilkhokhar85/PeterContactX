@@ -226,27 +226,37 @@ def _short(text, n=18):
     text = str(text)
     return text if len(text) <= n else text[:n - 1] + "…"
 
+def num_emoji(n: int) -> str:
+    """12 -> 1️⃣2️⃣"""
+    return "".join(d + "\ufe0f\u20e3" for d in str(n))
+
+def _is_public(c) -> bool:
+    return str(c["chat"]).startswith("@")
+
 async def render_fj_menu():
     channels = await get_force_channel_docs()
-    buttons = []
-    for c in channels:
-        icon = "📨" if c["mode"] == "request" else "📢"
-        label = f"{icon} {_short(c.get('title') or c['chat'])}"
+    buttons = [[InlineKeyboardButton("➕ Add Chat", callback_data="fj_add")]]
+    lines = []
+    for i, c in enumerate(channels, 1):
+        title = html.escape(_short(c.get("title") or c["chat"], 35))
         url = _chat_url(c)
-        name_btn = InlineKeyboardButton(label, url=url) if url else InlineKeyboardButton(label, callback_data="noop")
+        shown = f'<a href="{html.escape(url)}">{title}</a>' if url else title
+        icon = "📢" if _is_public(c) else "🔒"
+        lines.append(f"{num_emoji(i)}{icon} {shown}" + (" 📨" if c["mode"] == "request" else ""))
+        number = num_emoji(i)
         buttons.append([
             InlineKeyboardButton("❌", callback_data=f"fj_del:{c['chat']}"),
-            name_btn,
+            InlineKeyboardButton(number, url=url) if url else InlineKeyboardButton(number, callback_data="noop"),
             InlineKeyboardButton("🔺", callback_data=f"fj_up:{c['chat']}"),
             InlineKeyboardButton("🔻", callback_data=f"fj_dn:{c['chat']}"),
         ])
-    buttons.append([InlineKeyboardButton("➕ Add Chat", callback_data="fj_add")])
     buttons.append([InlineKeyboardButton("⬅ Back", callback_data="menu")])
+    listing = "\n".join(lines) if lines else "No Chats Added Yet."
     text = (
         "<b>🔑 Force Join !!\n\n"
-        "📢 Normal: User Must Join\n"
-        "📨 Request: Request Is Enough\n\n"
-        "❌ Remove · 🔺 Move Up · 🔻 Move Down</b>"
+        f"{listing}\n\n"
+        "🔒 Private · 📢 Public · 📨 Join Request\n"
+        "❌ Remove · 🔺 Up · 🔻 Down</b>"
     )
     return text, InlineKeyboardMarkup(buttons)
 
