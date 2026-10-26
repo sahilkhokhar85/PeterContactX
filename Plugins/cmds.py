@@ -5,7 +5,7 @@ import asyncio
 import logging
 
 from pyrogram import Client, filters, enums
-from pyrogram.types import Message
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import admin_filter, add_user, is_banned, is_user_exist
 from logchannel import log_user_message, log_event, log_now
@@ -45,7 +45,25 @@ async def start_cmd(client: Client, message: Message):
 
 @Client.on_message(filters.command("restart") & filters.private & admin_filter)
 async def restart_bot(client: Client, message: Message):
-    await message.reply_text("<b>🔄 Restarting...</b>", parse_mode=enums.ParseMode.HTML)
-    await log_now(client, f"<b>🔄 Bot Restarting</b>\n\n<b>👮 By:</b> <code>{message.from_user.id}</code>")
+    """/restart asks first (same as the Restart Bot button in /settings), so a stray tap never restarts the bot."""
+    await client.send_message(
+        message.chat.id,
+        "<b>🔄 Restart The Bot?\n\nIt Is Back In A Few Seconds.</b>",
+        parse_mode=enums.ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, Restart", callback_data="rs_cmd_yes")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="rs_cmd_no")],
+        ]),
+    )
+
+
+@Client.on_callback_query(filters.regex("^rs_cmd_(yes|no)$") & admin_filter)
+async def restart_answer(client: Client, query):
+    if query.data == "rs_cmd_no":
+        await query.answer("Cancelled.")
+        return await query.message.edit_text("<b>❌ Cancelled. The Bot Was Not Restarted.</b>", parse_mode=enums.ParseMode.HTML)
+    await query.answer("Restarting...")
+    await query.message.edit_text("<b>🔄 Restarting...</b>", parse_mode=enums.ParseMode.HTML)
+    await log_now(client, f"<b>🔄 Bot Restarting</b>\n\n<b>👮 By:</b> <code>{query.from_user.id}</code>")
     await asyncio.sleep(2)
     os.execl(sys.executable, sys.executable, *sys.argv)
