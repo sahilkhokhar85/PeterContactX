@@ -429,6 +429,9 @@ async def move_force_channel(chat: str, delta: int) -> bool:
         await force_channels_col.update_one({"chat": name}, {"$set": {"order": pos}})
     return True
 
+async def set_force_channel_title(chat: str, title: str):
+    await force_channels_col.update_one({"chat": chat}, {"$set": {"title": title}})
+
 async def set_force_channel_link(chat: str, link: str):
     await force_channels_col.update_one({"chat": chat}, {"$set": {"link": link}})
 
