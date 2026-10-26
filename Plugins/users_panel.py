@@ -17,18 +17,13 @@ from database import (
 )
 from logchannel import log_event, log_text
 from Plugins.moderation import _ids_log
-from Plugins.settings import edit, send_panel, pending, settings_filter, HTML
+from Plugins.settings import edit, send_panel, pending, settings_filter, num_emoji, HTML
 
 PAGE = 8
 manage_filter = admin_perm("can_manage_admins")
 
 _names = {}   # user id -> name shown on the screens
 _missed = set()   # ids Telegram doesn't know: not asked again
-
-
-def num_emoji(n: int) -> str:
-    """12 -> 1️⃣2️⃣"""
-    return "".join(d + "️⃣" for d in str(n))
 
 
 def _mention(uid: int, name: str) -> str:
