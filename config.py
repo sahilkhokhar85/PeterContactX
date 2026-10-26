@@ -36,3 +36,9 @@ BROADCAST_CONCURRENCY = int(os.environ.get("BROADCAST_CONCURRENCY", "25"))
 # How long (days) the "which user sent this forwarded message" mapping is kept.
 # Needed so you can reply to old messages even after a restart.
 MESSAGE_MAP_DAYS = int(os.environ.get("MESSAGE_MAP_DAYS", "30"))
+
+# ---------------- Optional: a user account that only LOOKS UP names ----------------
+# Pyrogram session string of a normal Telegram account. The bot uses it ONLY to find the name
+# of users it has never seen (for example in the banned users list). Leave empty to switch it off.
+# It is a full login of that account: keep it in the .env file only, never share it or put it on GitHub.
+SESSION_STRING = os.environ.get("SESSION_STRING", "").strip()
