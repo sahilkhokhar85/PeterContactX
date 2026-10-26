@@ -251,7 +251,6 @@ async def bl_export_cb(client: Client, query: CallbackQuery):
     if not ids:
         return await query.answer("The Ban List Is Empty.", show_alert=True)
     await query.answer("Sending...")
-    log_event(client, "📄 Ban List Downloaded", by=query.from_user, lines=[f"<b>🚫 Ids:</b> <code>{len(ids)}</code>"])
     buf = io.BytesIO("\n".join(str(i) for i in ids).encode("utf-8"))
     buf.name = "banned_ids.txt"
     await client.send_document(query.message.chat.id, buf, caption=f"<b>🚫 Banned Ids: {len(ids)}</b>", parse_mode=HTML)
