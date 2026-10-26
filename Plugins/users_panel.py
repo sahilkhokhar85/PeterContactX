@@ -10,6 +10,7 @@ import re
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
+import userlookup
 from config import OWNERS
 from database import (
     admin_perm, add_admin, remove_admin, get_admins, is_admin, is_owner, get_user,
@@ -48,6 +49,8 @@ async def _name(client, uid: int, fetch: bool = True) -> str:
             name = " ".join(x for x in (u.first_name, u.last_name) if x)
         except Exception:
             name = None
+    if not name and fetch and uid not in _missed:
+        name = await userlookup.lookup_name(uid)   # optional account that knows more users than the bot
     if name:
         if len(_names) > 2000:
             _names.clear()
