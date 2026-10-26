@@ -1,10 +1,13 @@
-"""/settings panel: Automatic replies, Force join, Statistics.
+"""/settings panel: Automatic replies, Force join, Statistics, Restart.
 
 (Start message is permanent in texts.py, broadcast is done with /broadcast, bans with /ban.)
 Every message of the panel is bold; ids / numbers stay monospace.
 """
+import asyncio
 import html
+import os
 import re
+import sys
 
 from pyrogram import Client, filters, enums, StopPropagation
 from pyrogram.types import (
@@ -12,7 +15,7 @@ from pyrogram.types import (
 )
 
 from texts import SETTINGS_IMAGE
-from logchannel import log_event, clip
+from logchannel import log_event, log_now, clip
 from database import (
     admin_filter, admin_perm, admins_count, banned_users_count, total_users_count,
     get_auto_replies, add_auto_reply, remove_auto_reply,
@@ -59,7 +62,8 @@ def main_menu_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔤 Automatic Replies", callback_data="ar_menu"),
          InlineKeyboardButton("🔑 Force Join", callback_data="fj_menu")],
-        [InlineKeyboardButton("📊 Statistics", callback_data="stats")]
+        [InlineKeyboardButton("📊 Statistics", callback_data="stats"),
+         InlineKeyboardButton("⏱ Restart Bot", callback_data="rs_ask")]
     ])
 
 @Client.on_message(filters.command(["settings", "menu"]) & filters.private & settings_filter)
@@ -82,6 +86,31 @@ async def cancel_cb(client: Client, query: CallbackQuery):
     pending.pop(query.from_user.id, None)
     await query.answer("Cancelled.")
     await edit(query, MAIN_TEXT, reply_markup=main_menu_markup(), parse_mode=HTML)
+
+
+# ============================================================
+# RESTART (asks first, so a stray tap never restarts the bot)
+# ============================================================
+
+@Client.on_callback_query(filters.regex("^rs_ask$") & settings_filter)
+async def restart_ask_cb(client: Client, query: CallbackQuery):
+    await edit(
+        query,
+        "<b>🔄 Restart The Bot?\n\nIt Is Back In A Few Seconds.</b>",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, Restart", callback_data="rs_yes")],
+            [InlineKeyboardButton("⬅ Back", callback_data="menu")],
+        ]),
+        parse_mode=HTML,
+    )
+
+@Client.on_callback_query(filters.regex("^rs_yes$") & settings_filter)
+async def restart_yes_cb(client: Client, query: CallbackQuery):
+    await query.answer("Restarting...")
+    await edit(query, "<b>🔄 Restarting...</b>", reply_markup=None, parse_mode=HTML)
+    await log_now(client, f"<b>🔄 Bot Restarting</b>\n\n<b>👮 By:</b> <code>{query.from_user.id}</code>")
+    await asyncio.sleep(2)
+    os.execl(sys.executable, sys.executable, *sys.argv)
 
 
 # ============================================================
@@ -310,6 +339,22 @@ async def pending_input_handler(client: Client, message: Message):
                 "<b>Check The @username / ID And Make Sure The Bot Is An Admin There. Send It Again Or Cancel.</b>",
                 reply_markup=cancel_btn()
             )
+        if getattr(info, "username", None):
+            # A public channel has no join requests, so there is nothing to ask: it is added as Normal.
+            chat = f"@{info.username}"
+            await add_force_channel(chat, mode="normal", link=None, chat_id=info.id)
+            pending.pop(admin_id, None)
+            log_event(client, "➕ Force Join Chat Added", by=message.from_user, lines=[
+                f"<b>📢 Chat:</b> {html.escape(str(info.title or chat))} (<code>{html.escape(chat)}</code>)",
+                "<b>Mode:</b> Normal",
+            ])
+            text, markup = await render_fj_menu()
+            await send_plain(
+                client, message,
+                f"<b>✅ Added</b> <code>{html.escape(chat)}</code> <b>({html.escape(info.title or 'chat')}) In Normal Mode.</b>\n\n{text}",
+                reply_markup=markup
+            )
+            raise StopPropagation
         pending[admin_id] = {"action": "fj_mode", "temp": {"chat": chat, "chat_id": info.id, "title": info.title}}
         await send_plain(
             client, message,
