@@ -1,4 +1,4 @@
-"""/settings panel: Automatic replies, Force join, Statistics, Restart.
+"""/settings panel: Automatic replies, Force join, Statistics, Restart, Users management (Plugins/users_panel.py).
 
 (Start message is permanent in texts.py, broadcast is done with /broadcast, bans with /ban.)
 Every message of the panel is bold; ids / numbers stay monospace.
@@ -19,7 +19,7 @@ from logchannel import log_event, log_now, clip
 from database import (
     admin_filter, admin_perm, admins_count, banned_users_count, total_users_count,
     get_auto_replies, add_auto_reply, remove_auto_reply,
-    get_force_channel_docs, add_force_channel, remove_force_channel,
+    get_force_channel_docs, add_force_channel, remove_force_channel, move_force_channel,
 )
 
 HTML = enums.ParseMode.HTML
@@ -37,17 +37,50 @@ MAIN_TEXT = (
 )
 
 
+def _no_urls(markup):
+    """Same keyboard with link buttons turned into plain ones (used if Telegram refuses a link button)."""
+    if not markup:
+        return markup
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(b.text, callback_data="noop") if getattr(b, "url", None) else b for b in row]
+        for row in markup.inline_keyboard
+    ])
+
+
+def _button_refused(e) -> bool:
+    return "BUTTON" in (type(e).__name__ + str(e)).upper()
+
+
 async def edit(query: CallbackQuery, text: str, reply_markup=None, parse_mode=HTML):
-    """Edit the panel message: the main panel is a photo (edit its caption), other messages are plain text."""
+    """Edit the panel message: every panel message is a photo (edit its caption), older plain ones are edited as text."""
     msg = query.message
-    if msg.photo:
-        return await msg.edit_caption(text, reply_markup=reply_markup, parse_mode=parse_mode)
-    return await msg.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+
+    async def go(markup):
+        if msg.photo:
+            return await msg.edit_caption(text, reply_markup=markup, parse_mode=parse_mode)
+        return await msg.edit_text(text, reply_markup=markup, parse_mode=parse_mode)
+
+    try:
+        return await go(reply_markup)
+    except Exception as e:
+        if "NOTMODIFIED" in (type(e).__name__ + str(e)).upper().replace("_", ""):
+            return None   # same screen tapped again
+        if reply_markup and _button_refused(e):
+            return await go(_no_urls(reply_markup))
+        raise
 
 
-async def send_plain(client: Client, message: Message, text: str, **kwargs):
-    """Send a normal message (no reply-quote of the admin's own message)."""
-    return await client.send_message(message.chat.id, text, parse_mode=HTML, **kwargs)
+async def send_panel(client: Client, message: Message, text: str, reply_markup=None):
+    """Send a panel screen as a NEW message, with the panel image on top (so the image never disappears)."""
+    chat_id = message.chat.id
+    for markup in ([reply_markup, _no_urls(reply_markup)] if reply_markup else [None]):
+        try:
+            return await client.send_photo(chat_id, SETTINGS_IMAGE, caption=text, reply_markup=markup, parse_mode=HTML)
+        except Exception as e:
+            if markup is reply_markup and reply_markup and _button_refused(e):
+                continue
+            break
+    return await client.send_message(chat_id, text, parse_mode=HTML, reply_markup=reply_markup and _no_urls(reply_markup))
 
 
 def cancel_btn():
@@ -63,18 +96,19 @@ def main_menu_markup():
         [InlineKeyboardButton("🔤 Automatic Replies", callback_data="ar_menu"),
          InlineKeyboardButton("🔑 Force Join", callback_data="fj_menu")],
         [InlineKeyboardButton("📊 Statistics", callback_data="stats"),
-         InlineKeyboardButton("⏱ Restart Bot", callback_data="rs_ask")]
+         InlineKeyboardButton("⏱ Restart Bot", callback_data="rs_ask")],
+        [InlineKeyboardButton("👤 Users Management", callback_data="um_menu")],
     ])
 
 @Client.on_message(filters.command(["settings", "menu"]) & filters.private & settings_filter)
 async def settings_cmd(client: Client, message: Message):
     pending.pop(message.from_user.id, None)
     log_event(client, "⚙️ Settings Panel Opened", by=message.from_user)
-    try:
-        await client.send_photo(message.chat.id, SETTINGS_IMAGE, caption=MAIN_TEXT,
-                                reply_markup=main_menu_markup(), parse_mode=HTML)
-    except Exception:
-        await send_plain(client, message, MAIN_TEXT, reply_markup=main_menu_markup())
+    await send_panel(client, message, MAIN_TEXT, reply_markup=main_menu_markup())
+
+@Client.on_callback_query(filters.regex("^noop$") & settings_filter)
+async def noop_cb(client: Client, query: CallbackQuery):
+    await query.answer()
 
 @Client.on_callback_query(filters.regex("^menu$") & settings_filter)
 async def menu_cb(client: Client, query: CallbackQuery):
@@ -176,19 +210,43 @@ def _clean_chat(raw):
         return "@" + text, "@" + text
     return None, None
 
+def _chat_url(c):
+    """A link that opens the chat when its button is tapped (None when there is no usable one)."""
+    if c.get("link"):
+        return c["link"]
+    chat = c["chat"]
+    if chat.startswith("@"):
+        return f"https://t.me/{chat[1:]}"
+    cid = str(c.get("chat_id") or chat)
+    if cid.startswith("-100"):
+        return f"https://t.me/c/{cid[4:]}/1"
+    return None
+
+def _short(text, n=18):
+    text = str(text)
+    return text if len(text) <= n else text[:n - 1] + "…"
+
 async def render_fj_menu():
     channels = await get_force_channel_docs()
-    buttons = [
-        [InlineKeyboardButton(f"❌ {'📨' if c['mode'] == 'request' else '📢'} {c['chat']}", callback_data=f"fj_del:{c['chat']}")]
-        for c in channels
-    ]
+    buttons = []
+    for c in channels:
+        icon = "📨" if c["mode"] == "request" else "📢"
+        label = f"{icon} {_short(c.get('title') or c['chat'])}"
+        url = _chat_url(c)
+        name_btn = InlineKeyboardButton(label, url=url) if url else InlineKeyboardButton(label, callback_data="noop")
+        buttons.append([
+            InlineKeyboardButton("❌", callback_data=f"fj_del:{c['chat']}"),
+            name_btn,
+            InlineKeyboardButton("🔺", callback_data=f"fj_up:{c['chat']}"),
+            InlineKeyboardButton("🔻", callback_data=f"fj_dn:{c['chat']}"),
+        ])
     buttons.append([InlineKeyboardButton("➕ Add Chat", callback_data="fj_add")])
     buttons.append([InlineKeyboardButton("⬅ Back", callback_data="menu")])
     text = (
         "<b>🔑 Force Join !!\n\n"
         "📢 Normal: User Must Join\n"
         "📨 Request: Request Is Enough\n\n"
-        "👇 Tap A Chat To Remove It.</b>"
+        "❌ Remove · 🔺 Move Up · 🔻 Move Down</b>"
     )
     return text, InlineKeyboardMarkup(buttons)
 
@@ -228,7 +286,7 @@ async def fj_mode_cb(client: Client, query: CallbackQuery):
                 parse_mode=HTML
             )
 
-    await add_force_channel(temp["chat"], mode=mode, link=link, chat_id=temp["chat_id"])
+    await add_force_channel(temp["chat"], mode=mode, link=link, chat_id=temp["chat_id"], title=temp["title"])
     pending.pop(query.from_user.id, None)
     log_event(client, "➕ Force Join Chat Added", by=query.from_user, lines=[
         f"<b>📢 Chat:</b> {html.escape(str(temp['title'] or temp['chat']))} (<code>{html.escape(str(temp['chat']))}</code>)",
@@ -243,12 +301,43 @@ async def fj_mode_cb(client: Client, query: CallbackQuery):
         reply_markup=markup, parse_mode=HTML
     )
 
+async def _fj_label(chat):
+    for c in await get_force_channel_docs():
+        if c["chat"] == chat:
+            return c.get("title") or chat
+    return chat
+
 @Client.on_callback_query(filters.regex(r"^fj_del:") & settings_filter)
 async def fj_del_cb(client: Client, query: CallbackQuery):
+    """Asks before removing."""
     chat = query.data.split("fj_del:", 1)[1]
+    await query.answer()
+    await edit(
+        query,
+        f"<b>⚠️ Remove</b> <code>{html.escape(str(await _fj_label(chat)))}</code> <b>From Force Join?</b>",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, Remove", callback_data=f"fj_dely:{chat}")],
+            [InlineKeyboardButton("⬅ Back", callback_data="fj_menu")],
+        ]),
+        parse_mode=HTML,
+    )
+
+@Client.on_callback_query(filters.regex(r"^fj_dely:") & settings_filter)
+async def fj_del_yes_cb(client: Client, query: CallbackQuery):
+    chat = query.data.split("fj_dely:", 1)[1]
     await remove_force_channel(chat)
     log_event(client, "➖ Force Join Chat Removed", by=query.from_user, lines=[f"<b>📢 Chat:</b> <code>{html.escape(chat)}</code>"])
     await query.answer("Removed.")
+    text, markup = await render_fj_menu()
+    await edit(query, text, reply_markup=markup, parse_mode=HTML)
+
+@Client.on_callback_query(filters.regex(r"^fj_(up|dn):") & settings_filter)
+async def fj_move_cb(client: Client, query: CallbackQuery):
+    kind, chat = query.data.split(":", 1)
+    moved = await move_force_channel(chat, -1 if kind == "fj_up" else 1)
+    if not moved:
+        return await query.answer("Already At The Top." if kind == "fj_up" else "Already At The Bottom.")
+    await query.answer("Moved.")
     text, markup = await render_fj_menu()
     await edit(query, text, reply_markup=markup, parse_mode=HTML)
 
@@ -287,7 +376,11 @@ async def pending_input_handler(client: Client, message: Message):
     temp = state["temp"]
 
     # only "add a force join chat" understands a forwarded channel post; anything without text is not input here
-    if not message.text and not (action == "fj_add" and getattr(message, "forward_from_chat", None)):
+    forwarded_ok = (
+        (action == "fj_add" and getattr(message, "forward_from_chat", None))
+        or (action in ("adm_add", "ban_add", "unban_add") and getattr(message, "forward_from", None))
+    )
+    if not message.text and not forwarded_ok:
         return
 
     # An admin command (/settings, /ban ...) while the panel waits for input cancels that
@@ -300,7 +393,7 @@ async def pending_input_handler(client: Client, message: Message):
     if action == "ar_add_keyword":
         temp["keyword"] = message.text.strip()
         pending[admin_id] = {"action": "ar_add_reply", "temp": temp}
-        await send_plain(client, message, "<b>Now Send The Reply Text For This Keyword:</b>", reply_markup=cancel_btn())
+        await send_panel(client, message, "<b>Now Send The Reply Text For This Keyword:</b>", reply_markup=cancel_btn())
 
     elif action == "ar_add_reply":
         await add_auto_reply(temp["keyword"], message.text.html)
@@ -310,8 +403,11 @@ async def pending_input_handler(client: Client, message: Message):
             f"<b>💬 Reply:</b> {clip(message.text)}",
         ])
         text, markup = await render_ar_menu()
-        await send_plain(client, message, f"<b>✅ Auto-Reply Added For Keyword</b> <code>{html.escape(temp['keyword'])}</code><b>.</b>")
-        await send_plain(client, message, text, reply_markup=markup)
+        await send_panel(
+            client, message,
+            f"<b>✅ Auto-Reply Added For Keyword</b> <code>{html.escape(temp['keyword'])}</code><b>.</b>\n\n{text}",
+            reply_markup=markup
+        )
 
     # ---------- Force join ----------
     elif action == "fj_add":
@@ -322,7 +418,7 @@ async def pending_input_handler(client: Client, message: Message):
         else:
             chat, target = _clean_chat(message.text)
         if chat is None:
-            return await send_plain(
+            return await send_panel(
                 client, message,
                 "<b>❌ That Isn't A Usable Channel.</b>\n\n"
                 "<b>Send The</b> <code>@username</code><b>, A</b> <code>t.me/username</code> <b>Link, Or The Channel ID "
@@ -333,7 +429,7 @@ async def pending_input_handler(client: Client, message: Message):
         try:
             info = await client.get_chat(target)
         except Exception as e:
-            return await send_plain(
+            return await send_panel(
                 client, message,
                 f"<b>❌ Couldn't Find That Chat:</b>\n<code>{html.escape(str(e))}</code>\n\n"
                 "<b>Check The @username / ID And Make Sure The Bot Is An Admin There. Send It Again Or Cancel.</b>",
@@ -342,21 +438,21 @@ async def pending_input_handler(client: Client, message: Message):
         if getattr(info, "username", None):
             # A public channel has no join requests, so there is nothing to ask: it is added as Normal.
             chat = f"@{info.username}"
-            await add_force_channel(chat, mode="normal", link=None, chat_id=info.id)
+            await add_force_channel(chat, mode="normal", link=None, chat_id=info.id, title=info.title)
             pending.pop(admin_id, None)
             log_event(client, "➕ Force Join Chat Added", by=message.from_user, lines=[
                 f"<b>📢 Chat:</b> {html.escape(str(info.title or chat))} (<code>{html.escape(chat)}</code>)",
                 "<b>Mode:</b> Normal",
             ])
             text, markup = await render_fj_menu()
-            await send_plain(
+            await send_panel(
                 client, message,
                 f"<b>✅ Added</b> <code>{html.escape(chat)}</code> <b>({html.escape(info.title or 'chat')}) In Normal Mode.</b>\n\n{text}",
                 reply_markup=markup
             )
             raise StopPropagation
         pending[admin_id] = {"action": "fj_mode", "temp": {"chat": chat, "chat_id": info.id, "title": info.title}}
-        await send_plain(
+        await send_panel(
             client, message,
             f"<b>{html.escape(info.title or chat)} Found.\n\nHow Should Users Join It?\n"
             "📢 Normal: They Must Be A Member.\n"
@@ -368,8 +464,12 @@ async def pending_input_handler(client: Client, message: Message):
             ])
         )
 
+    elif action in ("adm_add", "ban_add", "unban_add"):
+        from Plugins import users_panel   # imported here: users_panel itself imports this module
+        await users_panel.handle_input(client, message, action)
+
     elif action == "fj_mode":
-        return await send_plain(
+        return await send_panel(
             client, message,
             "<b>Please Choose How Users Join Using The Buttons Above, Or Cancel.</b>",
             reply_markup=cancel_btn()
