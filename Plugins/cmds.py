@@ -34,12 +34,12 @@ async def start_cmd(client: Client, message: Message):
         return
 
     if not await is_subscribed(client, user_id):
-        log_event(client, "📢 Force Join Pending (/start)", user=message.from_user)
         return await send_force_sub_prompt(client, message)
 
     is_new = not await is_user_exist(user_id)
     await add_user(user_id, message.from_user.first_name or "", message.from_user.username or "")
-    log_user_message(client, message, "🆕 New User Started The Bot" if is_new else "▶️ User Started The Bot Again")
+    if is_new:   # a user who starts the bot again is not logged
+        log_user_message(client, message, "🆕 New User Started The Bot")
     await send_start_message(client, message.chat.id, message.from_user)
 
 
