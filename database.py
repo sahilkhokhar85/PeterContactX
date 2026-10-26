@@ -162,6 +162,13 @@ async def add_user(user_id: int, first_name: str = "", username: str = ""):
 async def get_user(user_id: int):
     return await users_col.find_one({"user_id": user_id})
 
+async def find_user_by_username(username: str):
+    """A user who started the bot, found by @username (case-insensitive)."""
+    name = (username or "").lstrip("@").lower()
+    if not name:
+        return None
+    return await users_col.find_one({"username": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
+
 async def is_user_exist(user_id: int) -> bool:
     return await users_col.find_one({"user_id": user_id}) is not None
 
@@ -377,12 +384,11 @@ async def find_auto_reply(text: str):
 # Each entry: {chat: <what the admin typed>, chat_id: <numeric id>, mode: "normal"|"request", link: <invite link>}
 # Old entries that only have {chat} keep working (mode defaults to "normal").
 
-async def add_force_channel(chat: str, mode: str = "normal", link: str = None, chat_id: int = None):
-    await force_channels_col.update_one(
-        {"chat": chat},
-        {"$set": {"chat": chat, "mode": mode, "link": link, "chat_id": chat_id}},
-        upsert=True
-    )
+async def add_force_channel(chat: str, mode: str = "normal", link: str = None, chat_id: int = None, title: str = None):
+    fields = {"chat": chat, "mode": mode, "link": link, "chat_id": chat_id}
+    if title:
+        fields["title"] = title
+    await force_channels_col.update_one({"chat": chat}, {"$set": fields}, upsert=True)
 
 async def remove_force_channel(chat: str):
     doc = await force_channels_col.find_one({"chat": chat})
@@ -395,15 +401,33 @@ async def get_force_channels():
     return [doc["chat"] async for doc in cursor]
 
 async def get_force_channel_docs() -> list:
-    out = []
+    """All force join chats in the order the admin arranged them (new ones go last)."""
+    raw = []
     async for doc in force_channels_col.find({}):
-        out.append({
-            "chat": doc["chat"],
-            "chat_id": doc.get("chat_id"),
-            "mode": doc.get("mode") or "normal",
-            "link": doc.get("link"),
-        })
-    return out
+        raw.append(doc)
+    ranked = sorted(enumerate(raw), key=lambda p: (p[1].get("order", 10 ** 9), p[0]))
+    return [{
+        "chat": d["chat"],
+        "chat_id": d.get("chat_id"),
+        "mode": d.get("mode") or "normal",
+        "link": d.get("link"),
+        "title": d.get("title"),
+    } for _, d in ranked]
+
+async def move_force_channel(chat: str, delta: int) -> bool:
+    """Moves a force join chat one step up (delta=-1) or down (+1). False when it can't move that way."""
+    docs = await get_force_channel_docs()
+    names = [d["chat"] for d in docs]
+    if chat not in names:
+        return False
+    i = names.index(chat)
+    j = i + delta
+    if j < 0 or j >= len(names):
+        return False
+    names[i], names[j] = names[j], names[i]
+    for pos, name in enumerate(names):
+        await force_channels_col.update_one({"chat": name}, {"$set": {"order": pos}})
+    return True
 
 async def set_force_channel_link(chat: str, link: str):
     await force_channels_col.update_one({"chat": chat}, {"$set": {"link": link}})
