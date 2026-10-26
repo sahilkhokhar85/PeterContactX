@@ -77,7 +77,6 @@ async def forward_to_admin(client: Client, message: Message):
         return
 
     if not await is_subscribed(client, user_id):
-        log_event(client, "📢 Force Join Pending (Message Not Delivered)", user=message.from_user, message=message)
         return await send_force_sub_prompt(client, message)
 
     await add_user(user_id, message.from_user.first_name or "", message.from_user.username or "")
