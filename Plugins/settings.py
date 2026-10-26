@@ -20,6 +20,7 @@ from database import (
     admin_filter, admin_perm, admins_count, banned_users_count, total_users_count,
     get_auto_replies, add_auto_reply, remove_auto_reply,
     get_force_channel_docs, add_force_channel, remove_force_channel, move_force_channel,
+    set_force_channel_title,
 )
 
 HTML = enums.ParseMode.HTML
@@ -233,13 +234,37 @@ def num_emoji(n: int) -> str:
 def _is_public(c) -> bool:
     return str(c["chat"]).startswith("@")
 
-async def render_fj_menu():
+async def _fj_info(client, c):
+    """(title, link) of a force join chat: the real channel title and a link that opens / joins it.
+    Titles of old entries are read from Telegram once and saved."""
+    title, link = c.get("title"), _chat_url(c)
+    if client is None:
+        return title, link
+    try:
+        from Plugins.forcesub import _join_info   # same link the users get on their Join button
+        t, l = await _join_info(client, c)
+        title, link = title or t, l or link
+    except Exception:
+        pass
+    if not title:
+        try:
+            title = (await client.get_chat(c.get("chat_id") or c["chat"])).title
+        except Exception:
+            title = None
+    if title and not c.get("title"):
+        try:
+            await set_force_channel_title(c["chat"], title)
+        except Exception:
+            pass
+    return title, link
+
+async def render_fj_menu(client=None):
     channels = await get_force_channel_docs()
+    infos = await asyncio.gather(*[_fj_info(client, c) for c in channels])
     buttons = [[InlineKeyboardButton("➕ Add Chat", callback_data="fj_add")]]
     lines = []
-    for i, c in enumerate(channels, 1):
-        title = html.escape(_short(c.get("title") or c["chat"], 35))
-        url = _chat_url(c)
+    for i, (c, (name, url)) in enumerate(zip(channels, infos), 1):
+        title = html.escape(_short(name or c["chat"], 35))
         shown = f'<a href="{html.escape(url)}">{title}</a>' if url else title
         icon = "📢" if _is_public(c) else "🔒"
         lines.append(f"{num_emoji(i)}{icon} {shown}" + (" 📨" if c["mode"] == "request" else ""))
@@ -259,7 +284,7 @@ async def render_fj_menu():
 
 @Client.on_callback_query(filters.regex("^fj_menu$") & settings_filter)
 async def fj_menu_cb(client: Client, query: CallbackQuery):
-    text, markup = await render_fj_menu()
+    text, markup = await render_fj_menu(client)
     await edit(query, text, reply_markup=markup, parse_mode=HTML)
 
 @Client.on_callback_query(filters.regex("^fj_add$") & settings_filter)
@@ -300,7 +325,7 @@ async def fj_mode_cb(client: Client, query: CallbackQuery):
         f"<b>Mode:</b> {'Join Request' if mode == 'request' else 'Normal'}",
     ])
     await query.answer("Added.")
-    text, markup = await render_fj_menu()
+    text, markup = await render_fj_menu(client)
     title = html.escape(temp["title"] or "chat")
     await edit(query, 
         f"<b>✅ Added</b> <code>{html.escape(temp['chat'])}</code> <b>({title}) In "
@@ -335,7 +360,7 @@ async def fj_del_yes_cb(client: Client, query: CallbackQuery):
     await remove_force_channel(chat)
     log_event(client, "➖ Force Join Chat Removed", by=query.from_user, lines=[f"<b>📢 Chat:</b> <code>{html.escape(chat)}</code>"])
     await query.answer("Removed.")
-    text, markup = await render_fj_menu()
+    text, markup = await render_fj_menu(client)
     await edit(query, text, reply_markup=markup, parse_mode=HTML)
 
 @Client.on_callback_query(filters.regex(r"^fj_(up|dn):") & settings_filter)
@@ -345,7 +370,7 @@ async def fj_move_cb(client: Client, query: CallbackQuery):
     if not moved:
         return await query.answer("Already At The Top." if kind == "fj_up" else "Already At The Bottom.")
     await query.answer("Moved.")
-    text, markup = await render_fj_menu()
+    text, markup = await render_fj_menu(client)
     await edit(query, text, reply_markup=markup, parse_mode=HTML)
 
 
@@ -451,7 +476,7 @@ async def pending_input_handler(client: Client, message: Message):
                 f"<b>📢 Chat:</b> {html.escape(str(info.title or chat))} (<code>{html.escape(chat)}</code>)",
                 "<b>Mode:</b> Normal",
             ])
-            text, markup = await render_fj_menu()
+            text, markup = await render_fj_menu(client)
             await send_panel(
                 client, message,
                 f"<b>✅ Added</b> <code>{html.escape(chat)}</code> <b>({html.escape(info.title or 'chat')}) In Normal Mode.</b>\n\n{text}",
