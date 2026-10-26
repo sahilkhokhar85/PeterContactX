@@ -3,6 +3,7 @@
 Every screen is a message with the panel image; names are clickable (they open the profile).
 Adding / removing administrators needs the "Manage admins" right (owners always have it).
 """
+import asyncio
 import html
 import re
 
@@ -22,6 +23,7 @@ PAGE = 8
 manage_filter = admin_perm("can_manage_admins")
 
 _names = {}   # user id -> name shown on the screens
+_missed = set()   # ids Telegram doesn't know: not asked again
 
 
 def num_emoji(n: int) -> str:
@@ -45,7 +47,7 @@ async def _name(client, uid: int, fetch: bool = True) -> str:
     doc = await get_user(uid)
     if doc and doc.get("first_name"):
         name = doc["first_name"]
-    if not name and fetch:
+    if not name and fetch and uid not in _missed:
         try:
             u = await client.get_users(uid)
             name = " ".join(x for x in (u.first_name, u.last_name) if x)
@@ -55,6 +57,10 @@ async def _name(client, uid: int, fetch: bool = True) -> str:
         if len(_names) > 2000:
             _names.clear()
         _names[uid] = name
+    elif fetch:
+        if len(_missed) > 5000:
+            _missed.clear()
+        _missed.add(uid)
     return name or "User"
 
 
@@ -233,27 +239,47 @@ async def bn_ask_cb(client: Client, query: CallbackQuery):
     await edit(query, text, reply_markup=InlineKeyboardMarkup([menu_back("bn_menu")]))
 
 
-async def render_banned(page: int = 0):
+async def render_banned(client, page: int = 0, fetch: bool = False):
+    """-> (text, markup, ids whose name is still unknown). fetch=False never waits for Telegram (instant)."""
     ids = await get_banned_users()
     if not ids:
         return ("<b>📃 List Of Banned Users !!\n\nNo Banned Users Yet.</b>",
-                InlineKeyboardMarkup([menu_back("bn_menu")]))
+                InlineKeyboardMarkup([menu_back("bn_menu")]), [])
     pages = max(1, -(-len(ids) // PAGE))
     page = min(max(page, 0), pages - 1)
+    chunk = ids[page * PAGE:(page + 1) * PAGE]
+    names = await asyncio.gather(*[_name(client, uid, fetch=fetch) for uid in chunk])
     lines = []
-    for i, uid in enumerate(ids[page * PAGE:(page + 1) * PAGE], page * PAGE + 1):
-        name = await _name(None, uid, fetch=False)
+    for i, (uid, name) in enumerate(zip(chunk, names), page * PAGE + 1):
         lines.append(f"{num_emoji(i)} {_mention(uid, name)} <code>{uid}</code>")
     text = f"<b>📃 List Of Banned Users !!\n\n" + "\n".join(lines) + "</b>"
-    return text, InlineKeyboardMarkup(_nav("bl_list", page, len(ids), "bn_menu"))
+    missing = [u for u, n in zip(chunk, names) if u not in _names and u not in _missed]
+    return text, InlineKeyboardMarkup(_nav("bl_list", page, len(ids), "bn_menu")), missing
+
+
+async def _fill_names(client, query, page, missing):
+    """Runs after the list is already on screen: asks Telegram for the missing names, then updates the list."""
+    try:
+        await asyncio.wait_for(asyncio.gather(*[_name(client, u) for u in missing]), 8)
+    except Exception:
+        return
+    if any(u in _names for u in missing):
+        try:
+            text, markup, _ = await render_banned(client, page)
+            await edit(query, text, reply_markup=markup)
+        except Exception:
+            pass
 
 
 @Client.on_callback_query(filters.regex(r"^bl_list:\d+$") & settings_filter)
 async def bl_list_cb(client: Client, query: CallbackQuery):
     pending.pop(query.from_user.id, None)
     await query.answer()
-    text, markup = await render_banned(int(query.data.split(":")[1]))
-    await edit(query, text, reply_markup=markup)
+    page = int(query.data.split(":")[1])
+    text, markup, missing = await render_banned(client, page)
+    await edit(query, text, reply_markup=markup)   # shown at once
+    if missing:
+        asyncio.create_task(_fill_names(client, query, page, missing))
 
 
 # ============================================================
