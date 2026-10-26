@@ -696,7 +696,6 @@ def _pin_log(units, pin):
 
 async def _run_direct(bot, sts, user_id, units, admin=None, pin=None, nopreview=None):
     """Send to one user and tell the admin exactly what happened."""
-    log_event(bot, "📨 Send To User Started", uid=user_id, by=admin, lines=_pin_log(units, pin) + _preview_log(nopreview), units=units)
     await sts.edit_text("<b>Sending...</b>")
     sent = 0
     pins_ok = []
@@ -733,10 +732,13 @@ async def _run_direct(bot, sts, user_id, units, admin=None, pin=None, nopreview=
     if reason is None:
         extra = [f"<b>📌 Pinned:</b> <code>{'yes' if pinned else 'no'}</code>"] if pin else []
         log_event(bot, "✅ Sent To User", uid=user_id, by=admin,
-                  lines=[f"<b>📦 Messages:</b> <code>{sent}</code>"] + extra)
+                  lines=[f"<b>📦 Messages:</b> <code>{sent}</code>"] + _pin_log(units, pin) + extra + _preview_log(nopreview),
+                  units=units)
     else:
         log_event(bot, "❌ Not Sent To User", uid=user_id, by=admin,
-                  lines=[f"<b>{reason}</b>", f"<b>Delivered Before The Error:</b> <code>{sent}</code> Of <code>{len(units)}</code>"])
+                  lines=[f"<b>{reason}</b>", f"<b>Delivered Before The Error:</b> <code>{sent}</code> Of <code>{len(units)}</code>"]
+                  + _pin_log(units, pin) + _preview_log(nopreview),
+                  units=units)
 
 
 async def _send_all(bot, targets, units, on_progress=None, every=20, pin=None, batch=None, nopreview=None):
