@@ -236,11 +236,8 @@ async def check_fsub_cb(client: Client, query):
             await query.message.delete()
         except Exception:
             pass
-        log_event(client, "✅ Force Join Completed", user=query.from_user)
         await query.answer("✅ Thanks for joining! You can use the bot now.", show_alert=True)
     else:
-        log_event(client, "❌ Force Join Not Completed", user=query.from_user,
-                  lines=[f"<b>📢 Still Missing:</b> <code>{len(missing)}</code>"])
         await query.answer(f"❌ You haven't joined all channels yet ({len(missing)} left).", show_alert=True)
 
 
@@ -256,8 +253,6 @@ async def track_join_request(client: Client, update):
         logger.error(f"[FSUB] couldn't save join request: {type(e).__name__}: {e}")
         return
     clear_user_cache(update.from_user.id)
-    log_event(client, "📨 Join Request Sent", user=update.from_user,
-              lines=[f"<b>📢 Channel:</b> {html.escape(str(getattr(update.chat, 'title', None) or update.chat.id))}"])
     try:
         await client.send_message(update.from_user.id, "<b>✅ Request Received! You Can Use The Bot Now.</b>", parse_mode=enums.ParseMode.HTML)
     except Exception:
@@ -285,14 +280,9 @@ async def handle_member_left(client: Client, update):
 
     entries = await get_force_channel_docs()
     is_force_chat = any(_numeric_id(e) == update.chat.id for e in entries)
-    chat_line = [f"<b>📢 Channel:</b> {html.escape(str(getattr(update.chat, 'title', None) or update.chat.id))}"]
     if not gone:
-        if is_force_chat and (old is None or old.status in (enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED)):
-            log_event(client, "➕ User Joined A Force Join Channel", user=user, lines=chat_line)
         return
 
     clear_user_cache(user.id)
-    if is_force_chat:
-        log_event(client, "➖ User Left A Force Join Channel", user=user, lines=chat_line)
     if any(e["mode"] == "request" and _numeric_id(e) == update.chat.id for e in entries):
         await clear_join_request(user.id, update.chat.id)
