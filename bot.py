@@ -5,7 +5,6 @@ from aiohttp import web
 from config import API_ID, API_HASH, BOT_TOKEN, LOG_CHANNEL
 from logchannel import log_now
 from database import ensure_indexes, delete_user
-import userlookup
 
 routes = web.RouteTableDef()
 
@@ -57,14 +56,11 @@ class Bot(Client):
         except Exception:
             pass
         
-        await userlookup.start()   # optional account (SESSION_STRING) that finds names of users the bot never saw
-
         # start notice goes to the log channel only (nothing is sent to the owner's chat with the bot)
         await log_now(self, f"<b>🤖 {html.escape(me.first_name)} Started !!</b>")
 
     async def stop(self, *args):
         await log_now(self, "<b>🛑 Bot Stopped</b>")
-        await userlookup.stop()
         await super().stop()
         print("Bot stopped.")
 
