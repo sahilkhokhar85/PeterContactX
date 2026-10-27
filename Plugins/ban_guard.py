@@ -1,4 +1,9 @@
-"""Silent block for banned users.
+x"""Two guards that run before every other plugin.
+
+1) Group -6: the bot's OWN messages (and edits) are never handled. Without this the bot answered its own
+   replies as if a user had written them: it forwarded its own start message to the admins and
+   answered itself with "Message Sent!", over and over.
+2) Group -5: silent block for banned users.
 
 Runs in group -5 (before every other plugin). If the sender is banned the update
 is dropped here: no reply, no forward to the admins, no "you are banned" message.
@@ -13,6 +18,25 @@ from database import is_banned, is_admin
 from logchannel import log_event, once_per
 
 logger = logging.getLogger(__name__)
+
+
+async def _is_own(_, __, message) -> bool:
+    """True for a message the bot itself sent (or edited) in a private chat."""
+    user = getattr(message, "from_user", None)
+    return bool(getattr(message, "outgoing", False) or (user is not None and getattr(user, "is_self", False)))
+
+
+from_self = filters.create(_is_own)
+
+
+@Client.on_message(filters.private & from_self, group=-6)
+async def ignore_own_messages(client, message):
+    raise StopPropagation
+
+
+@Client.on_edited_message(filters.private & from_self, group=-6)
+async def ignore_own_edits(client, message):
+    raise StopPropagation
 
 
 async def _blocked(user) -> bool:
