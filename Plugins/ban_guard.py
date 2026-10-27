@@ -1,4 +1,4 @@
-x"""Two guards that run before every other plugin.
+"""Two guards that run before every other plugin.
 
 1) Group -6: the bot's OWN messages (and edits) are never handled. Without this the bot answered its own
    replies as if a user had written them: it forwarded its own start message to the admins and
