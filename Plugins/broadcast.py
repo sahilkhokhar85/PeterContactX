@@ -233,6 +233,21 @@ def _clean_old_jobs():
         _JOBS.pop(token, None)
 
 
+async def _can_message(bot, uid):
+    """None when a message can reach this user, else why not (checked with an invisible 'typing' action)."""
+    try:
+        await bot.send_chat_action(uid, enums.ChatAction.TYPING)
+    except UserIsBlocked:
+        return "That User Has Blocked The Bot."
+    except InputUserDeactivated:
+        return "That Account Is Deleted."
+    except PeerIdInvalid:
+        return "The Bot Can't Find This User. Check The ID. The User Must Have Started The Bot."
+    except Exception:
+        return None   # can't tell (flood wait, network): let the normal flow try
+    return None
+
+
 async def _user_label(bot, uid):
     """'Name (id)' for the /send messages. The name comes from the saved users, else from Telegram;
     if neither knows it, only the id is shown."""
@@ -480,6 +495,12 @@ async def send_cmd(bot, message):
     if await is_banned(target):
         return await message.reply_text(
             "<b>🚫 This User Is Banned.\n/unban First To Message Them.</b>"
+        )
+
+    reason = await _can_message(bot, target)
+    if reason:
+        return await message.reply_text(
+            f"<b>❌ Can't Send To</b> {await _user_label(bot, target)}<b>.\n{reason}</b>"
         )
 
     if message.reply_to_message:
