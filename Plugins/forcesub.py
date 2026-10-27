@@ -16,6 +16,7 @@ import html
 import logging
 import re
 import time
+import types
 
 from pyrogram import Client, filters, enums
 from pyrogram.errors import UserNotParticipant
@@ -259,6 +260,24 @@ async def track_join_request(client: Client, update):
         pass   # user may never have started the bot - nothing to do
 
 
+@Client.on_raw_update(group=3)
+async def bot_stopped_update(client: Client, update, users, chats):
+    """A user blocked / unblocked the bot. Telegram tells the bot at once ("UpdateBotStopped"); this reads that
+    raw update directly, so it works whatever the library does with it."""
+    if type(update).__name__ != "UpdateBotStopped":
+        return
+    uid = update.user_id
+    stopped = bool(update.stopped)
+    logger.info(f"[BOT STOPPED] user {uid} {'blocked' if stopped else 'unblocked'} the bot")
+    clear_user_cache(uid)
+    raw = (users or {}).get(uid)
+    user = None
+    if raw is not None and getattr(raw, "first_name", None) is not None:
+        user = types.SimpleNamespace(id=uid, first_name=raw.first_name or "", username=getattr(raw, "username", None) or "")
+    log_event(client, "🚫 User Blocked The Bot" if stopped else "✅ User Unblocked The Bot",
+              user=user, uid=None if user else uid)
+
+
 @Client.on_chat_member_updated()
 async def handle_member_left(client: Client, update):
     """Logs blocks / unblocks of the bot and force-join channel joins / leaves. When someone leaves / is removed
@@ -270,12 +289,8 @@ async def handle_member_left(client: Client, update):
         return
     gone = new is None or new.status in (enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED)
 
-    # a user blocked / unblocked the bot (private chat)
+    # blocks / unblocks of the bot (private chat) are logged by bot_stopped_update below
     if getattr(update.chat, "type", None) == enums.ChatType.PRIVATE:
-        if gone:
-            log_event(client, "🚫 User Blocked The Bot", user=user)
-        elif old is not None and old.status in (enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED):
-            log_event(client, "✅ User Unblocked The Bot", user=user)
         return
 
     entries = await get_force_channel_docs()
