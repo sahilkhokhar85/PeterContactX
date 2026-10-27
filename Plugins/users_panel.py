@@ -207,7 +207,7 @@ def bn_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🚷 Ban A User", callback_data="bn_ban"),
          InlineKeyboardButton("✅ Unban A User", callback_data="bn_unban")],
-        [InlineKeyboardButton("📃 List Of Banned Users", callback_data="bl_export")],
+        [InlineKeyboardButton("📃 List Of Banned Users", callback_data="bl_ask")],
         menu_back("um_menu"),
     ])
 
@@ -233,6 +233,23 @@ async def bn_ask_cb(client: Client, query: CallbackQuery):
                 "👉🏻 Send The ID Or Username Of The User To Be Unbanned. The User Must Have Already Started The Bot.\n\n"
                 "💡 Or Use /unban As A Reply.</b>")
     await edit(query, text, reply_markup=InlineKeyboardMarkup([menu_back("bn_menu")]))
+
+
+@Client.on_callback_query(filters.regex("^bl_ask$") & settings_filter)
+async def bl_ask_cb(client: Client, query: CallbackQuery):
+    """Asks before sending the file."""
+    count = await banned_users_count()
+    if not count:
+        return await query.answer("The Ban List Is Empty.", show_alert=True)
+    await query.answer()
+    await edit(
+        query,
+        f"<b>📃 Send The Banned Users List?\n\n🚫 Banned Ids: <code>{count}</code>\nIt Comes As A .txt File.</b>",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Yes, Send", callback_data="bl_export"),
+            InlineKeyboardButton("⬅ Back", callback_data="bn_menu"),
+        ]]),
+    )
 
 
 @Client.on_callback_query(filters.regex("^bl_export$") & settings_filter)
