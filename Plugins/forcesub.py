@@ -25,7 +25,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from logchannel import log_event
 from database import (
     get_force_channel_docs, set_force_channel_link, record_join_request,
-    get_join_request, clear_join_request,
+    get_join_request, clear_join_request, is_admin,
 )
 
 logger = logging.getLogger(__name__)
@@ -136,7 +136,9 @@ async def _check_entry(client: Client, entry: dict, user_id: int):
 
 
 async def get_not_joined_entries(client: Client, user_id: int) -> list:
-    """Force-join entries (dicts) the user has not satisfied yet."""
+    """Force-join entries (dicts) the user has not satisfied yet. Owners and admins are never forced to join."""
+    if await is_admin(user_id):
+        return []
     entries = await get_force_channel_docs()
     if not entries:
         return []
