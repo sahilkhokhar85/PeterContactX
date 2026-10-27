@@ -131,10 +131,10 @@ async def restart_ask_cb(client: Client, query: CallbackQuery):
     await edit(
         query,
         "<b>🔄 Restart The Bot?\n\nIt Is Back In A Few Seconds.</b>",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Yes, Restart", callback_data="rs_yes")],
-            [InlineKeyboardButton("⬅ Back", callback_data="menu")],
-        ]),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Yes, Restart", callback_data="rs_yes"),
+            InlineKeyboardButton("⬅ Back", callback_data="menu"),
+        ]]),
         parse_mode=HTML,
     )
 
