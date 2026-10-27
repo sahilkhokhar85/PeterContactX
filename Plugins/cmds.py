@@ -50,10 +50,10 @@ async def restart_bot(client: Client, message: Message):
         message.chat.id,
         "<b>🔄 Restart The Bot?\n\nIt Is Back In A Few Seconds.</b>",
         parse_mode=enums.ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Yes, Restart", callback_data="rs_cmd_yes")],
-            [InlineKeyboardButton("❌ Cancel", callback_data="rs_cmd_no")],
-        ]),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Yes, Restart", callback_data="rs_cmd_yes"),
+            InlineKeyboardButton("❌ Cancel", callback_data="rs_cmd_no"),
+        ]]),
     )
 
 
