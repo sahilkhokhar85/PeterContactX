@@ -11,7 +11,6 @@ import re
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-import userlookup
 from config import OWNERS
 from database import (
     admin_perm, add_admin, remove_admin, get_admins, is_admin, is_owner, get_user,
@@ -25,15 +24,11 @@ PAGE = 8
 manage_filter = admin_perm("can_manage_admins")
 
 _names = {}   # user id -> name shown on the screens
-_by_account = set()   # ids whose name came from the lookup account (the bot itself can't mention them)
 _missed = set()   # ids Telegram doesn't know: not asked again
 
 
 def _mention(uid: int, name: str) -> str:
-    """Clickable name. The bot can only make a real mention for users it knows; for the others the link opens
-    the profile in the Telegram app if the viewer's app knows that user."""
-    link = f"tg://openmessage?user_id={uid}" if uid in _by_account else f"tg://user?id={uid}"
-    return f'<a href="{link}">{html.escape(_short(name, 25))}</a>'
+    return f'<a href="tg://user?id={uid}">{html.escape(_short(name, 25))}</a>'
 
 
 def _short(text, n=18):
@@ -54,10 +49,6 @@ async def _name(client, uid: int, fetch: bool = True) -> str:
             name = " ".join(x for x in (u.first_name, u.last_name) if x)
         except Exception:
             name = None
-    if not name and fetch and uid not in _missed:
-        name = await userlookup.lookup_name(uid)   # optional account that knows more users than the bot
-        if name:
-            _by_account.add(uid)
     if name:
         if len(_names) > 2000:
             _names.clear()
